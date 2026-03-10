@@ -18,6 +18,12 @@ interface Session {
   id: string;
   name: string;
   isAttached: boolean;
+  command?: string;
+  directory?: string;
+  currentCommand?: string;
+  currentPath?: string;
+  clientCount?: number;
+  suggestedMode?: 'attach' | 'mirror';
   isWaitingForInput?: boolean;
   lastLine?: string;
   content?: string;
@@ -31,7 +37,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.0',
+    title: 'Work OS v0.8.1',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -81,9 +87,12 @@ const translations = {
     readOnlyBadge: 'READ ONLY',
     detachAll: 'Detach All',
     clientSummary: 'Summary',
+    mode: 'Mode',
+    cwd: 'CWD',
+    clientsCount: 'Clients',
   },
   en: {
-    title: 'Work OS v0.8.0',
+    title: 'Work OS v0.8.1',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -133,6 +142,9 @@ const translations = {
     readOnlyBadge: 'READ ONLY',
     detachAll: 'Detach All',
     clientSummary: 'Summary',
+    mode: 'Mode',
+    cwd: 'CWD',
+    clientsCount: 'Clients',
   }
 };
 
@@ -178,6 +190,7 @@ export default function Home() {
 
   const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
   const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
+  const getSessionModeLabel = (session: Session) => terminalModeMap[session.id] || session.suggestedMode || 'auto';
   const changeTerminalHeight = (id: string, delta: number) => {
     setTerminalHeightMap((prev) => ({
       ...prev,
@@ -536,6 +549,12 @@ export default function Home() {
                   </div>
                 </div>
                 <div style={{ marginTop: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem' }}>
+                    <div>{t.mode}: {getSessionModeLabel(session)}</div>
+                    <div>{t.clientsCount}: {session.clientCount || 0}</div>
+                    <div>{t.cwd}: {session.currentPath || session.directory || '-'}</div>
+                    <div>cmd: {session.currentCommand || session.command || '-'}</div>
+                  </div>
                   <Terminal
                     key={`${session.id}:${terminalModeMap[session.id] || 'auto'}:${getTerminalHeight(session.id)}`}
                     sessionId={session.id}
@@ -578,6 +597,12 @@ export default function Home() {
                     </div>
                   </div>
                   <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem' }}>
+                      <div>{t.mode}: {getSessionModeLabel(shell)}</div>
+                      <div>{t.clientsCount}: {shell.clientCount || 0}</div>
+                      <div>{t.cwd}: {shell.currentPath || shell.directory || '-'}</div>
+                      <div>cmd: {shell.currentCommand || shell.command || '-'}</div>
+                    </div>
                     <Terminal
                       key={`${shell.id}:${getTerminalHeight(shell.id)}`}
                       sessionId={shell.id}
