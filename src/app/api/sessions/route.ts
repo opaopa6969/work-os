@@ -136,12 +136,22 @@ export async function GET() {
           getTmuxArgs(['display-message', '-p', '-t', name, '#{pane_current_path}']),
           { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
         ).trim();
-        const clientLines = execFileSync(
+        const clientOutput = execFileSync(
           'tmux',
-          getTmuxArgs(['list-clients', '-t', name, '-F', '#{client_tty}']),
+          getTmuxArgs(['list-clients', '-t', name, '-F', '#{client_tty}\t#{client_activity}']),
           { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
         ).trim();
-        const clientCount = clientLines ? clientLines.split('\n').filter(Boolean).length : 0;
+        const clientRows = clientOutput
+          ? clientOutput
+              .split('\n')
+              .filter(Boolean)
+              .map((row) => {
+                const [, activity] = row.split('\t');
+                return Number.parseInt(activity || '0', 10) || 0;
+              })
+          : [];
+        const clientCount = clientRows.length;
+        const lastActivity = clientRows.length ? Math.max(...clientRows) : Number(created);
         const lowerCommand = (currentCommand || command || '').toLowerCase();
         const suggestedMode =
           attached === '1'
@@ -161,6 +171,7 @@ export async function GET() {
           currentCommand,
           currentPath,
           clientCount,
+          lastActivity,
           suggestedMode,
         };
       });

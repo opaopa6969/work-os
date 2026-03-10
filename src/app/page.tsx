@@ -18,6 +18,7 @@ interface Session {
   id: string;
   name: string;
   isAttached: boolean;
+  lastActivity?: number;
   command?: string;
   directory?: string;
   currentCommand?: string;
@@ -37,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.4',
+    title: 'Work OS v0.8.5',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -89,11 +90,14 @@ const translations = {
     detachAll: 'Detach All',
     clientSummary: 'Summary',
     mode: 'Mode',
+    activity: 'Activity',
     cwd: 'CWD',
     clientsCount: 'Clients',
+    copy: 'Copy',
+    copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.4',
+    title: 'Work OS v0.8.5',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -145,8 +149,11 @@ const translations = {
     detachAll: 'Detach All',
     clientSummary: 'Summary',
     mode: 'Mode',
+    activity: 'Activity',
     cwd: 'CWD',
     clientsCount: 'Clients',
+    copy: 'Copy',
+    copied: 'Copied',
   }
 };
 
@@ -186,6 +193,7 @@ export default function Home() {
   } | null>(null);
   const [clientsLoading, setClientsLoading] = useState<string | null>(null);
   const [clientActionKey, setClientActionKey] = useState<string | null>(null);
+  const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
@@ -223,6 +231,20 @@ export default function Home() {
       ...prev,
       [id]: Math.max(320, Math.min(960, (prev[id] || 450) + delta)),
     }));
+  };
+  const copyPath = async (sessionId: string, value?: string) => {
+    if (!value) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedPathId(sessionId);
+      window.setTimeout(() => {
+        setCopiedPathId((prev) => (prev === sessionId ? null : prev));
+      }, 1200);
+    } catch (error) {
+      console.error('Failed to copy path', error);
+    }
   };
 
   const fetchSessions = async () => {
@@ -584,7 +606,14 @@ export default function Home() {
                     >
                       {t.clientsCount}: {session.clientCount || 0}
                     </button>
-                    <span title={session.currentPath || session.directory || '-'}>{t.cwd}: {compactPath(session.currentPath || session.directory)}</span>
+                    <span>{t.activity}: {formatRelativeTime(session.lastActivity)}</span>
+                    <button
+                      onClick={() => copyPath(session.id, session.currentPath || session.directory)}
+                      title={session.currentPath || session.directory || '-'}
+                      style={{ background: 'transparent', color: '#8fa3ba', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                    >
+                      {t.cwd}: {compactPath(session.currentPath || session.directory)} {copiedPathId === session.id ? `(${t.copied})` : ''}
+                    </button>
                     <span title={session.currentCommand || session.command || '-'}>cmd: {session.currentCommand || session.command || '-'}</span>
                   </div>
                   <Terminal
@@ -637,7 +666,14 @@ export default function Home() {
                       >
                         {t.clientsCount}: {shell.clientCount || 0}
                       </button>
-                      <span title={shell.currentPath || shell.directory || '-'}>{t.cwd}: {compactPath(shell.currentPath || shell.directory)}</span>
+                      <span>{t.activity}: {formatRelativeTime(shell.lastActivity)}</span>
+                      <button
+                        onClick={() => copyPath(shell.id, shell.currentPath || shell.directory)}
+                        title={shell.currentPath || shell.directory || '-'}
+                        style={{ background: 'transparent', color: '#8fa3ba', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                      >
+                        {t.cwd}: {compactPath(shell.currentPath || shell.directory)} {copiedPathId === shell.id ? `(${t.copied})` : ''}
+                      </button>
                       <span title={shell.currentCommand || shell.command || '-'}>cmd: {shell.currentCommand || shell.command || '-'}</span>
                     </div>
                     <Terminal
