@@ -11,19 +11,22 @@ export async function GET(
   const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
 
   try {
-    // 指定したセッションのペインをキャプチャして取得
-    const output = execSync(getTmuxCmd(`capture-pane -pt "${id}"`), { encoding: 'utf-8' });
+    let output = '';
+    try {
+      output = execSync(getTmuxCmd(`capture-pane -a -e -J -p -t "${id}"`), { encoding: 'utf-8' });
+    } catch {
+      output = execSync(getTmuxCmd(`capture-pane -e -J -p -t "${id}"`), { encoding: 'utf-8' });
+    }
 
-    // 入力待ち判定ロジック (y/n, [y/N], Proceed?, 1. Allow once, etc.)
     const lines = output.trim().split('\n');
-    const lastLines = lines.slice(-5).join(' ').toLowerCase(); // より広範囲をチェック
-    
-    const isWaitingForInput = 
+    const lastLines = lines.slice(-5).join(' ').toLowerCase();
+
+    const isWaitingForInput =
       /([\[\(][y\/n]+[\)\]]|\? |proceed\?|continue\?|ready\?)/i.test(lastLines) ||
       /(● \d\. |[1-9]\. allow|[1-9]\. yes|[1-9]\. proceed)/i.test(lastLines);
 
-    return NextResponse.json({ 
-      id, 
+    return NextResponse.json({
+      id,
       content: output,
       isWaitingForInput,
       lastLine: lines[lines.length - 1] || '',

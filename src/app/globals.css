@@ -104,10 +104,66 @@ button:hover {
   opacity: 0.9;
 }
 
+.workos-terminal-shell .xterm-viewport {
+  background: transparent !important;
+}
+
+.workos-terminal-shell .xterm-screen canvas {
+  border-radius: 12px;
+}
+
+.workos-terminal-shell .xterm {
+  height: 100%;
+}
+
+.workos-terminal-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.workos-terminal-inner {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 18px 18px 0;
+}
+
+.workos-terminal-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.workos-terminal-body .xterm {
+  flex: 1;
+}
+
+.workos-terminal-body .xterm {
+  padding: 0;
+}
+
+.workos-terminal-body .xterm-viewport {
+  scrollbar-color: rgba(124, 224, 195, 0.45) rgba(255, 255, 255, 0.05);
+}
+
+.workos-terminal-body .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+.workos-terminal-body .xterm-viewport::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.workos-terminal-body .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(124, 224, 195, 0.45);
+  border-radius: 999px;
+}
+
 @media (max-width: 600px) {
   main {
     padding: 1rem;
   }
+
   .session-grid {
     grid-template-columns: 1fr;
   }

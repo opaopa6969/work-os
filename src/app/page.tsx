@@ -31,7 +31,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.7.4',
+    title: 'Work OS v0.7.6',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -68,10 +68,16 @@ const translations = {
     sending: '📡 送信中...',
     orchestrating: '🤝 相談中...',
     userPriority: '⚠️ ユーザー優先',
-    syncSize: 'サイズ同期'
+    syncSize: 'サイズ同期',
+    forceAttach: 'Force Attach',
+    bigger: '大きく',
+    smaller: '小さく',
+    clients: 'Clients',
+    close: '閉じる',
+    noClients: '接続中 client はありません',
   },
   en: {
-    title: 'Work OS v0.7.4',
+    title: 'Work OS v0.7.6',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -108,7 +114,13 @@ const translations = {
     sending: '📡 Sending...',
     orchestrating: '🤝 Orchestrating...',
     userPriority: '⚠️ User Priority',
-    syncSize: 'Sync Size'
+    syncSize: 'Sync Size',
+    forceAttach: 'Force Attach',
+    bigger: 'Larger',
+    smaller: 'Smaller',
+    clients: 'Clients',
+    close: 'Close',
+    noClients: 'No attached clients',
   }
 };
 
@@ -123,17 +135,33 @@ export default function Home() {
   const [isSyncSize, setIsSyncSize] = useState(true);
   const [dashPreviewLines, setDashPreviewLines] = useState(1);
   const [autoYesMap, setAutoYesMap] = useState<Record<string, boolean>>({});
-  const [proxyMap, setProxyMap] = useState<Record<string, string>>({}); 
+  const [proxyMap, setProxyMap] = useState<Record<string, string>>({});
   const [activeShellMap, setActiveShellMap] = useState<Record<string, string>>({});
+  const [terminalModeMap, setTerminalModeMap] = useState<Record<string, 'auto' | 'mirror' | 'attach' | 'resize-client'>>({});
+  const [terminalHeightMap, setTerminalHeightMap] = useState<Record<string, number>>({});
   const [newSession, setNewSession] = useState({ name: '', command: '', cwd: '', templateName: '' });
-  const [customCommands, setCustomCommands] = useState<Record<string, string>>({});
   const [sendingStatus, setSendingStatus] = useState<Record<string, boolean>>({});
   const [orchStatus, setOrchStatus] = useState<Record<string, boolean>>({});
   const [userInteractedAt, setUserInteractedAt] = useState<Record<string, number>>({});
   const [killedSessionIds, setKilledSessionIds] = useState<Set<string>>(new Set());
+  const [clientsDialog, setClientsDialog] = useState<{
+    sessionId: string;
+    raw: string;
+    clients: Array<{ raw: string }>;
+  } | null>(null);
+  const [clientsLoading, setClientsLoading] = useState<string | null>(null);
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
+
+  const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
+  const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
+  const changeTerminalHeight = (id: string, delta: number) => {
+    setTerminalHeightMap((prev) => ({
+      ...prev,
+      [id]: Math.max(320, Math.min(960, (prev[id] || 450) + delta)),
+    }));
+  };
 
   const fetchSessions = async () => {
     try {
@@ -143,6 +171,13 @@ export default function Home() {
         const filteredSessions = data.sessions.filter((s: Session) => !killedSessionIds.has(s.id));
         const updatedSessions = await Promise.all(
           filteredSessions.map(async (s: Session) => {
+            if (isShellSession(s.id)) {
+              return {
+                ...s,
+                summary: 'Shell',
+                isWaitingForInput: false,
+              };
+            }
             try {
               const capRes = await fetch(`/api/sessions/${s.id}`);
               const capData = await capRes.json();
@@ -160,17 +195,23 @@ export default function Home() {
                 }
               }
               const lines = capData.content.trim().split('\n');
-              const relevantLine = lines.reverse().find((l: string) => 
+              const relevantLine = lines.reverse().find((l: string) =>
                 l.includes('✔') || l.includes('✖') || l.includes('error') || l.includes('done') || l.length > 10
               );
               const summary = relevantLine ? relevantLine.replace(/\x1b\[[0-9;]*m/g, '').trim().substring(0, 50) : 'Idle';
               return { ...s, ...capData, summary, isInterrupted };
-            } catch { return s; }
+            } catch {
+              return s;
+            }
           })
         );
         setSessions(updatedSessions);
       }
-    } catch (error) { console.error('Failed to fetch sessions', error); } finally { setLoading(false); }
+    } catch (error) {
+      console.error('Failed to fetch sessions', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const runOrchestration = async (workerId: string, proxyId: string, context: string) => {
@@ -187,7 +228,10 @@ export default function Home() {
         if (lastLine && lastLine.length < 100) { await sendKey(workerId, lastLine + ' Enter', true); }
         setOrchStatus(prev => ({ ...prev, [workerId]: false }));
       }, 5000);
-    } catch (error) { console.error('Orchestration failed', error); setOrchStatus(prev => ({ ...prev, [workerId]: false })); }
+    } catch (error) {
+      console.error('Orchestration failed', error);
+      setOrchStatus(prev => ({ ...prev, [workerId]: false }));
+    }
   };
 
   const fetchTemplates = async () => {
@@ -195,14 +239,18 @@ export default function Home() {
       const res = await fetch('/api/templates');
       const data = await res.json();
       setTemplates(data.templates || []);
-    } catch (error) { console.error('Failed to fetch templates', error); }
+    } catch (error) {
+      console.error('Failed to fetch templates', error);
+    }
   };
 
   const initTemplate = async (sourceLang: 'ja' | 'en', sourceSubDir: string) => {
     try {
       await fetch('/api/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'init', sourceLang, sourceSubDir }) });
       fetchTemplates();
-    } catch (error) { console.error('Failed to init template', error); }
+    } catch (error) {
+      console.error('Failed to init template', error);
+    }
   };
 
   const duplicateTemplate = async (sourceName: string) => {
@@ -211,7 +259,9 @@ export default function Home() {
     try {
       await fetch('/api/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'duplicate', sourceName, name: newName }) });
       fetchTemplates();
-    } catch (error) { console.error('Failed to duplicate template', error); }
+    } catch (error) {
+      console.error('Failed to duplicate template', error);
+    }
   };
 
   const startSession = async (name: string, command: string, cwd?: string, templateName?: string) => {
@@ -220,7 +270,9 @@ export default function Home() {
       await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, command, cwd, templateName }) });
       fetchSessions();
       setNewSession({ ...newSession, name: '' });
-    } catch (error) { console.error('Failed to start session', error); }
+    } catch (error) {
+      console.error('Failed to start session', error);
+    }
   };
 
   const sendKey = async (id: string, key: string, isAuto: boolean = false) => {
@@ -237,15 +289,35 @@ export default function Home() {
       await refresh();
       setTimeout(refresh, 200);
       setTimeout(refresh, 800);
-    } catch (error) { console.error('Failed to send key', error); } finally { setSendingStatus(prev => ({ ...prev, [id]: false })); }
+    } catch (error) {
+      console.error('Failed to send key', error);
+    } finally {
+      setSendingStatus(prev => ({ ...prev, [id]: false }));
+    }
   };
 
   const killSession = async (id: string) => {
     if (!confirm(`Kill session ${id}?`)) return;
     setKilledSessionIds(prev => new Set(prev).add(id));
     setSessions(prev => prev.filter(s => s.id !== id));
-    setActiveShellMap(prev => { const next = { ...prev }; Object.keys(next).forEach(key => { if (next[key] === id) delete next[key]; }); delete next[id]; return next; });
-    try { await fetch(`/api/sessions/${id}`, { method: 'DELETE' }); setTimeout(fetchSessions, 1000); } catch (error) { console.error('Failed to kill session', error); setKilledSessionIds(prev => { const next = new Set(prev); next.delete(id); return next; }); fetchSessions(); }
+    setActiveShellMap(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(key => { if (next[key] === id) delete next[key]; });
+      delete next[id];
+      return next;
+    });
+    try {
+      await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+      setTimeout(fetchSessions, 1000);
+    } catch (error) {
+      console.error('Failed to kill session', error);
+      setKilledSessionIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      fetchSessions();
+    }
   };
 
   const enterShell = async (id: string) => {
@@ -254,11 +326,36 @@ export default function Home() {
       const data = await res.json();
       if (data.newSession) { setActiveShellMap(prev => ({ ...prev, [id]: data.newSession })); }
       fetchSessions();
-    } catch (error) { console.error('Failed to open shell', error); }
+    } catch (error) {
+      console.error('Failed to open shell', error);
+    }
+  };
+
+  const openClientsDialog = async (id: string) => {
+    setClientsLoading(id);
+    try {
+      const res = await fetch(`/api/sessions/${id}/clients`);
+      const data = await res.json();
+      setClientsDialog({
+        sessionId: id,
+        raw: data.raw || '',
+        clients: data.clients || [],
+      });
+    } catch (error) {
+      console.error('Failed to list clients', error);
+      setClientsDialog({
+        sessionId: id,
+        raw: '',
+        clients: [],
+      });
+    } finally {
+      setClientsLoading(null);
+    }
   };
 
   useEffect(() => {
-    fetchSessions(); fetchTemplates();
+    fetchSessions();
+    fetchTemplates();
     const interval = setInterval(fetchSessions, 2000);
     return () => clearInterval(interval);
   }, [proxyMap, autoYesMap, userInteractedAt, killedSessionIds]);
@@ -293,7 +390,6 @@ export default function Home() {
         </section>
       )}
 
-      {/* 司令塔ビュー */}
       <section style={{ marginBottom: '2rem', background: '#111', padding: '1rem', borderRadius: '8px', border: '1px solid var(--accent)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ fontSize: '0.9rem', margin: 0, color: 'var(--accent)' }}>{t.commander}</h2>
@@ -303,27 +399,24 @@ export default function Home() {
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {sessions.map(s => {
-            return (
-              <div key={s.id} id={`row-${s.id}`} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.5rem', background: s.isWaitingForInput ? '#2a2a00' : 'transparent', borderBottom: '1px solid #222' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem' }}>
-                  <a href={`#card-${s.id}`} style={{ color: s.isWaitingForInput ? '#ffeb3b' : '#fff', fontWeight: 'bold', width: '120px', textDecoration: 'none' }}>{s.isWaitingForInput ? '⚡ ' : ''}{s.name}</a>
-                  <span style={{ flex: 1, color: s.isWaitingForInput ? '#ffeb3b' : '#ccc', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.summary}</span>
-                  <span style={{ width: '80px', color: s.isAttached ? '#00ff88' : '#555', textAlign: 'right' }}>{s.isAttached ? '● active' : '○ idle'}</span>
-                </div>
-                {showDashPreview && (
-                  <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', background: '#000', padding: '0.4rem', borderRadius: '4px', border: '1px solid #222', overflow: 'hidden', maxHeight: '100px', color: s.isWaitingForInput ? '#ffeb3b' : '#ccc' }}>
-                    {isRichMode ? (<div dangerouslySetInnerHTML={{ __html: converter.toHtml((s.content || '').split('\n').slice(-dashPreviewLines).join('\n')) }} />) : (<pre style={{ margin: 0 }}>{(s.content || '').split('\n').slice(-dashPreviewLines).join('\n')}</pre>)}
-                  </div>
-                )}
+          {sessions.map(s => (
+            <div key={s.id} id={`row-${s.id}`} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.5rem', background: s.isWaitingForInput ? '#2a2a00' : 'transparent', borderBottom: '1px solid #222' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem' }}>
+                <a href={`#card-${s.id}`} style={{ color: s.isWaitingForInput ? '#ffeb3b' : '#fff', fontWeight: 'bold', width: '120px', textDecoration: 'none' }}>{s.isWaitingForInput ? '⚡ ' : ''}{s.name}</a>
+                <span style={{ flex: 1, color: s.isWaitingForInput ? '#ffeb3b' : '#ccc', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.summary}</span>
+                <span style={{ width: '80px', color: s.isAttached ? '#00ff88' : '#555', textAlign: 'right' }}>{s.isAttached ? '● active' : '○ idle'}</span>
               </div>
-            );
-          })}
+              {showDashPreview && (
+                <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', background: '#000', padding: '0.4rem', borderRadius: '4px', border: '1px solid #222', overflow: 'hidden', maxHeight: '100px', color: s.isWaitingForInput ? '#ffeb3b' : '#ccc' }}>
+                  {isRichMode ? (<div dangerouslySetInnerHTML={{ __html: converter.toHtml((s.content || '').split('\n').slice(-dashPreviewLines).join('\n')) }} />) : (<pre style={{ margin: 0 }}>{(s.content || '').split('\n').slice(-dashPreviewLines).join('\n')}</pre>)}
+                </div>
+              )}
+            </div>
+          ))}
           {sessions.length === 0 && <p style={{ fontSize: '0.8rem', color: '#555' }}>{t.noSessions}</p>}
         </div>
       </section>
 
-      {/* エージェント起動 */}
       <section style={{ marginBottom: '2rem', background: 'var(--card-bg)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
         <h2 style={{ fontSize: '1rem', marginBottom: '1rem', color: 'var(--text-dim)' }}>{t.launchAgent}</h2>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -355,8 +448,7 @@ export default function Home() {
           </div>
         )}
       </section>
-      
-      {/* 詳細グリッド */}
+
       <div className="session-grid">
         {sessions.filter(s => !s.name.startsWith('sh-')).map((session) => {
           const childShells = sessions.filter(s => s.name.startsWith(`sh-${session.name}-`));
@@ -367,18 +459,39 @@ export default function Home() {
               <div id={`card-${session.id}`} className="session-card" style={{ opacity: sendingStatus[session.id] ? 0.7 : 1, transition: 'opacity 0.2s', border: session.isWaitingForInput ? '1px solid #ffeb3b' : '1px solid var(--card-border)' }}>
                 <div className="session-header">
                   <span className="session-name">{session.name} {session.isWaitingForInput && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ffeb3b' }}>⚡ INPUT WAITING</span>} {sendingStatus[session.id] && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: 'var(--accent)' }}>{t.sending}</span>} {orchStatus[session.id] && !isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#00d1b2' }}>{t.orchestrating}</span>} {isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ff4444' }}>{t.userPriority}</span>}</span>
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <select value={proxyMap[session.id] || ''} onChange={(e) => setProxyMap({ ...proxyMap, [session.id]: e.target.value })} style={{ background: '#000', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem', padding: '0.1rem', borderRadius: '4px' }}>
                       <option value="">🤝 {t.noProxy}</option>
                       {sessions.filter(p => p.id !== session.id).map(p => <option key={p.id} value={p.id}>🤝 {p.name}</option>)}
                     </select>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: '#888', cursor: 'pointer' }}><input type="checkbox" checked={autoYesMap[session.id] || false} onChange={(e) => setAutoYesMap({ ...autoYesMap, [session.id]: e.target.checked })} /> {t.autoYes}</label>
+                    <select
+                      value={terminalModeMap[session.id] || 'auto'}
+                      onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [session.id]: e.target.value as 'auto' | 'mirror' | 'attach' | 'resize-client' }))}
+                      style={{ background: '#000', color: '#88d8cf', border: '1px solid #2d4a4a', fontSize: '0.7rem', padding: '0.15rem 0.3rem', borderRadius: '4px' }}
+                    >
+                      <option value="auto">auto</option>
+                      <option value="mirror">mirror</option>
+                      <option value="attach">attach</option>
+                      <option value="resize-client">resize-client</option>
+                    </select>
+                    <button onClick={() => changeTerminalHeight(session.id, -120)} style={{ background: 'transparent', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem' }}>{t.smaller}</button>
+                    <button onClick={() => changeTerminalHeight(session.id, 120)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>{t.bigger}</button>
                     <span className={`session-status ${session.isAttached ? 'status-active' : ''}`}>{session.isAttached ? 'Attached' : 'Idle'}</span>
                   </div>
                 </div>
-                <div style={{ marginTop: '0.5rem' }}><Terminal sessionId={session.id} syncSize={isSyncSize} /></div>
+                <div style={{ marginTop: '0.5rem' }}>
+                  <Terminal
+                    key={`${session.id}:${terminalModeMap[session.id] || 'auto'}:${getTerminalHeight(session.id)}`}
+                    sessionId={session.id}
+                    syncSize={isSyncSize}
+                    preferredMode={terminalModeMap[session.id] || 'auto'}
+                    height={getTerminalHeight(session.id)}
+                  />
+                </div>
                 <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <button onClick={() => openClientsDialog(session.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === session.id ? '...' : t.clients}</button>
                     <button onClick={() => window.open(`/api/sessions/${session.id}`, '_blank')} style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px solid #333', fontSize: '0.7rem' }}>Raw</button>
                     <button onClick={() => enterShell(session.id)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>🐚 Shell</button>
                     <button onClick={() => killSession(session.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill</button>
@@ -388,15 +501,97 @@ export default function Home() {
               </div>
               {childShells.map(shell => (
                 <div key={shell.id} id={`card-${shell.id}`} className="session-card" style={{ marginLeft: '2rem', border: '1px solid var(--accent)', background: '#050505', marginTop: '-1rem', marginBottom: '2rem' }}>
-                  <div className="session-header"><span className="session-name" style={{ color: 'var(--accent)' }}>🐚 Shell for {session.name}</span><span className="session-status status-active">LIVE</span></div>
-                  <div style={{ marginTop: '0.5rem' }}><Terminal sessionId={shell.id} onClose={() => killSession(shell.id)} syncSize={isSyncSize} /></div>
-                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
+                  <div className="session-header">
+                    <span className="session-name" style={{ color: 'var(--accent)' }}>🐚 Shell for {session.name}</span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select
+                        value={terminalModeMap[shell.id] || 'attach'}
+                        onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [shell.id]: e.target.value as 'auto' | 'mirror' | 'attach' | 'resize-client' }))}
+                        style={{ background: '#000', color: '#88d8cf', border: '1px solid #2d4a4a', fontSize: '0.7rem', padding: '0.15rem 0.3rem', borderRadius: '4px' }}
+                      >
+                        <option value="attach">attach</option>
+                        <option value="resize-client">resize-client</option>
+                        <option value="mirror">mirror</option>
+                      </select>
+                      <button onClick={() => changeTerminalHeight(shell.id, -120)} style={{ background: 'transparent', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem' }}>{t.smaller}</button>
+                      <button onClick={() => changeTerminalHeight(shell.id, 120)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>{t.bigger}</button>
+                      <span className="session-status status-active">LIVE</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <Terminal
+                      key={`${shell.id}:${getTerminalHeight(shell.id)}`}
+                      sessionId={shell.id}
+                      onClose={() => killSession(shell.id)}
+                      syncSize={isSyncSize}
+                      preferredMode={terminalModeMap[shell.id] || 'attach'}
+                      height={getTerminalHeight(shell.id)}
+                    />
+                  </div>
+                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => openClientsDialog(shell.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === shell.id ? '...' : t.clients}</button><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
                 </div>
               ))}
             </div>
           );
         })}
       </div>
+
+      {clientsDialog ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+            zIndex: 1000,
+          }}
+          onClick={() => setClientsDialog(null)}
+        >
+          <div
+            style={{
+              width: 'min(900px, 100%)',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              background: '#0b121d',
+              border: '1px solid #23374c',
+              borderRadius: '16px',
+              boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+              padding: '1rem',
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div>
+                <div style={{ color: '#9ecbff', fontSize: '0.8rem' }}>tmux list-clients</div>
+                <div style={{ color: '#fff', fontWeight: 700 }}>{clientsDialog.sessionId}</div>
+              </div>
+              <button onClick={() => setClientsDialog(null)} style={{ background: 'transparent', color: '#fff', border: '1px solid #334155', fontSize: '0.75rem' }}>{t.close}</button>
+            </div>
+            {clientsDialog.clients.length === 0 ? (
+              <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>{t.noClients}</div>
+            ) : null}
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                color: '#d7e3f4',
+                background: '#08111f',
+                border: '1px solid #1e293b',
+                borderRadius: '12px',
+                padding: '1rem',
+                fontSize: '0.8rem',
+                lineHeight: 1.5,
+              }}
+            >
+              {clientsDialog.raw || t.noClients}
+            </pre>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

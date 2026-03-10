@@ -10,157 +10,372 @@ interface TerminalProps {
   sessionId: string;
   onClose?: () => void;
   syncSize?: boolean;
+  preferredMode?: 'auto' | 'attach' | 'resize-client' | 'mirror';
+  height?: number;
 }
 
-export default function Terminal({ sessionId, onClose, syncSize = true }: TerminalProps) {
-  const terminalRef = useRef<HTMLDivElement>(null);
+type TerminalStatus = 'idle' | 'connecting' | 'ready' | 'error' | 'disconnected';
+
+export default function Terminal({ sessionId, onClose, preferredMode = 'auto', height = 450 }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalBodyRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
-  const socketRef = useRef<Socket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const [isAltMode, setIsAltMode] = useState(false);
-  const isScrolling = useRef(false);
-  const scrollTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [status, setStatus] = useState<TerminalStatus>('idle');
+  const [statusText, setStatusText] = useState('未接続');
+  const [terminalSize, setTerminalSize] = useState({ cols: 0, rows: 0 });
+  const [scrollLine, setScrollLine] = useState(1);
+  const [clockText, setClockText] = useState('');
 
   useEffect(() => {
-    let isComponentMounted = true;
-    if (!terminalRef.current || !containerRef.current) return;
+    if (!containerRef.current || !terminalRef.current || !terminalBodyRef.current) {
+      return;
+    }
+
+    let mounted = true;
+    let resizeObserver: ResizeObserver | null = null;
+    let wheelCleanup: (() => void) | null = null;
+    let bufferDisposable: { dispose: () => void } | null = null;
+    let clockTimer: number | null = null;
 
     const term = new XTerm({
       cursorBlink: true,
       cursorStyle: 'block',
-      cursorInactiveStyle: 'block', // フォーカス外でもブロック表示
-      fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      theme: { 
-        background: '#000000', 
-        cursor: '#00ff88',
-        selectionBackground: 'rgba(0, 255, 136, 0.3)'
-      },
-      scrollback: 5000,
+      fontSize: 15,
+      fontFamily: '"Iosevka Term", "SFMono-Regular", Consolas, monospace',
+      lineHeight: 1.2,
+      scrollback: 10000,
       convertEol: true,
-      allowProposedApi: true
+      allowProposedApi: true,
+      theme: {
+        background: '#08111f',
+        foreground: '#d7e3f4',
+        cursor: '#7ce0c3',
+        selectionBackground: 'rgba(124, 224, 195, 0.25)',
+        black: '#102235',
+        red: '#ff7b72',
+        green: '#7ce0c3',
+        yellow: '#e6c66b',
+        blue: '#74b9ff',
+        magenta: '#ff9ff3',
+        cyan: '#68e1fd',
+        white: '#d7e3f4',
+        brightBlack: '#4e647d',
+        brightRed: '#ff9b93',
+        brightGreen: '#9cf0d0',
+        brightYellow: '#f5d98d',
+        brightBlue: '#9ecbff',
+        brightMagenta: '#ffc4f8',
+        brightCyan: '#9decff',
+        brightWhite: '#ffffff',
+      },
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    xtermRef.current = term;
     fitAddonRef.current = fitAddon;
-    
-    const init = () => {
-      if (!isComponentMounted || !terminalRef.current) return;
+
+    const writeMeta = (message: string) => {
+      term.writeln(`\r\n\x1b[90m[work-os] ${message}\x1b[0m`);
+    };
+
+    const updateAltMode = () => {
+      setIsAltMode(term.buffer.active.type === 'alternate');
+    };
+
+    const updateMetrics = () => {
+      setTerminalSize({ cols: term.cols, rows: term.rows });
+      setScrollLine(term.buffer.active.viewportY + 1);
+    };
+
+    const mount = () => {
+      if (!mounted || !terminalRef.current) {
+        return;
+      }
       if (terminalRef.current.clientWidth < 10) {
-        setTimeout(init, 100);
+        window.setTimeout(mount, 80);
         return;
       }
 
       term.open(terminalRef.current);
-      xtermRef.current = term;
-      
       try {
         fitAddon.fit();
-        term.focus();
-      } catch (e) {}
+      } catch {
+      }
+      term.focus();
+      updateAltMode();
+      updateMetrics();
 
-      term.buffer.onBufferChange(() => {
-        setIsAltMode(term.buffer.active.type === 'alternate');
+      bufferDisposable = term.buffer.onBufferChange(() => {
+        updateAltMode();
+        updateMetrics();
       });
 
       const socket = io({ path: '/socket.io', reconnectionAttempts: 5 });
       socketRef.current = socket;
 
+      setStatus('connecting');
+      setStatusText('接続中');
+      writeMeta(`session ${sessionId} へ接続しています`);
+
       socket.on('connect', () => {
-        if (isComponentMounted) {
-          socket.emit('start', { sessionId, cols: term.cols, rows: term.rows, syncSize });
+        if (!mounted) {
+          return;
+        }
+        setStatus('connecting');
+        setStatusText('tmux 接続中');
+        socket.emit('start', {
+          sessionId,
+          cols: term.cols,
+          rows: term.rows,
+          preferredMode,
+        });
+      });
+
+      socket.on('terminal:status', (payload: { state?: string; sessionId?: string; message?: string }) => {
+        if (!mounted) {
+          return;
+        }
+        if (payload?.state === 'ready') {
+          setStatus('ready');
+          setStatusText(payload.message || `LIVE: ${payload?.sessionId || sessionId}`);
+          return;
+        }
+        if (payload?.state === 'connected') {
+          setStatus('connecting');
+          setStatusText(payload.message || 'socket 接続済み');
         }
       });
 
       socket.on('output', (data: string) => {
-        if (isComponentMounted && xtermRef.current && !isScrolling.current) {
-          // 1. 描画
-          term.write(data);
-          // 2. カーソルを強制的に可視化するエスケープシーケンスを再度叩き込む
-          term.write('\x1b[?25h');
-          // 3. 画面の強制リフレッシュ
-          term.refresh(0, term.rows - 1);
+        if (!mounted) {
+          return;
         }
+        term.write(data);
+      });
+
+      socket.on('terminal:snapshot', (payload: { data?: string }) => {
+        if (!mounted) {
+          return;
+        }
+        term.reset();
+        term.write(payload?.data || '');
+      });
+
+      socket.on('terminal:error', (payload: { message?: string }) => {
+        if (!mounted) {
+          return;
+        }
+        setStatus('error');
+        setStatusText('エラー');
+        writeMeta(payload?.message || 'terminal error');
+      });
+
+      socket.on('session-exit', (payload: { exitCode?: number; signal?: number }) => {
+        if (!mounted) {
+          return;
+        }
+        setStatus('disconnected');
+        setStatusText('session 終了');
+        writeMeta(`session ended code=${payload?.exitCode ?? 'n/a'} signal=${payload?.signal ?? 'n/a'}`);
+      });
+
+      socket.on('disconnect', () => {
+        if (!mounted) {
+          return;
+        }
+        setStatus('disconnected');
+        setStatusText('切断');
+      });
+
+      socket.on('connect_error', (error) => {
+        if (!mounted) {
+          return;
+        }
+        setStatus('error');
+        setStatusText('接続失敗');
+        writeMeta(error.message);
       });
 
       term.onData((data) => {
         if (socket.connected) {
-          socket.emit('command', { sessionId, data });
+          socket.emit('command', { data });
         }
       });
+
+      term.onResize(({ cols, rows }) => {
+        setTerminalSize({ cols, rows });
+      });
+
+      term.onScroll((viewportY) => {
+        setScrollLine(viewportY + 1);
+      });
+
+      term.onCursorMove(() => {
+        setScrollLine(term.buffer.active.viewportY + term.buffer.active.cursorY + 1);
+      });
+
+      resizeObserver = new ResizeObserver(() => {
+        window.requestAnimationFrame(() => {
+          try {
+            fitAddon.fit();
+            updateMetrics();
+            if (socket.connected) {
+              socket.emit('resize', {
+                cols: term.cols,
+                rows: term.rows,
+              });
+            }
+          } catch {
+          }
+        });
+      });
+      resizeObserver.observe(terminalRef.current as HTMLDivElement);
+
+      const onWheel = (event: WheelEvent) => {
+        if (term.buffer.active.type === 'alternate') {
+          event.preventDefault();
+        }
+      };
+      containerRef.current?.addEventListener('wheel', onWheel, { passive: false });
+      wheelCleanup = () => containerRef.current?.removeEventListener('wheel', onWheel);
+
+      const tickClock = () => {
+        setClockText(
+          new Intl.DateTimeFormat('ja-JP', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }).format(new Date()),
+        );
+      };
+      tickClock();
+      clockTimer = window.setInterval(tickClock, 1000);
     };
 
-    init();
-
-    const handleWheel = (e: WheelEvent) => {
-      if (!xtermRef.current || !socketRef.current?.connected) return;
-      if (isAltMode) {
-        e.preventDefault();
-        const cmd = e.deltaY > 0 ? 'WHEEL_DOWN' : 'WHEEL_UP';
-        socketRef.current.emit('command', { sessionId, data: cmd });
-      } else {
-        isScrolling.current = true;
-        if (scrollTimeout.current) clearTimeout(scrollTimeout.current);
-        scrollTimeout.current = setTimeout(() => {
-          isScrolling.current = false;
-        }, 1500); 
-      }
-    };
-
-    const container = containerRef.current;
-    container.addEventListener('wheel', handleWheel, { passive: false });
-
-    // クリック時にフォーカスを強制
-    const handleClick = () => {
-      if (xtermRef.current) term.focus();
-    };
-    container.addEventListener('click', handleClick);
+    mount();
 
     return () => {
-      isComponentMounted = false;
-      container.removeEventListener('wheel', handleWheel);
-      container.removeEventListener('click', handleClick);
-      if (scrollTimeout.current) clearTimeout(scrollTimeout.current);
-      if (socketRef.current) socketRef.current.disconnect();
-      if (xtermRef.current) term.dispose();
+      mounted = false;
+      resizeObserver?.disconnect();
+      wheelCleanup?.();
+      bufferDisposable?.dispose();
+      if (clockTimer !== null) {
+        window.clearInterval(clockTimer);
+      }
+      socketRef.current?.disconnect();
+      fitAddonRef.current = null;
+      xtermRef.current?.dispose();
       xtermRef.current = null;
+      socketRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, preferredMode]);
+
+  const borderColor = status === 'error' ? 'rgba(255, 123, 114, 0.55)' : 'rgba(255, 255, 255, 0.08)';
+  const toolbarBackground = isAltMode ? 'rgba(230, 198, 107, 0.16)' : 'rgba(255, 255, 255, 0.04)';
+  const toolbarColor = isAltMode ? '#e6c66b' : '#93a4ba';
+  const modeLabel = isAltMode ? 'APP MODE' : 'NORMAL MODE';
 
   return (
-    <div 
+    <div
       ref={containerRef}
-      style={{ 
-        position: 'relative', width: '100%', height: '450px', 
-        background: '#000', borderRadius: '4px', 
-        border: `1px solid ${isAltMode ? '#00d1b2' : '#333'}`,
-        overflow: 'hidden', boxSizing: 'border-box',
-        display: 'flex', flexDirection: 'column'
+      className="workos-terminal-shell"
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: `${height}px`,
+        background: 'rgba(255, 255, 255, 0.05)',
+        borderRadius: '22px',
+        border: `1px solid ${borderColor}`,
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 18px 60px rgba(8, 17, 31, 0.28)',
+        backdropFilter: 'blur(14px)',
       }}
     >
-      <div style={{
-        padding: '4px 10px', fontSize: '0.7rem',
-        background: isAltMode ? '#00d1b2' : '#222', color: isAltMode ? '#000' : '#888',
-        fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        borderBottom: '1px solid #333'
-      }}>
-        <span>{isAltMode ? 'APP MODE' : 'SHELL MODE'}</span>
-        <span>
-          Sync: {syncSize ? 'ON' : 'OFF'} | Scroll: {isAltMode ? 'App' : 'History'}
-        </span>
+      <div
+        className="workos-terminal-toolbar"
+        style={{
+          padding: '12px 16px',
+          fontSize: '13px',
+          background: toolbarBackground,
+          color: toolbarColor,
+          fontWeight: 600,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
+      >
+        <span>{modeLabel}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span>{statusText}</span>
+          {onClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                background: 'transparent',
+                color: '#d7e3f4',
+                border: '1px solid rgba(255,255,255,0.18)',
+                borderRadius: '999px',
+                padding: '0.3rem 0.7rem',
+                fontSize: '0.72rem',
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div 
-        ref={terminalRef} 
-        style={{ 
-          width: '100%', 
-          height: 'calc(100% - 25px)',
-          padding: '10px',
-          boxSizing: 'border-box'
-        }} 
-      />
+      <div
+        className="workos-terminal-body"
+        style={{
+          width: '100%',
+          flex: 1,
+          minHeight: 0,
+          boxSizing: 'border-box',
+          background: 'linear-gradient(180deg, #091425 0%, #08111f 100%)',
+        }}
+      >
+        <div
+          ref={terminalBodyRef}
+          className="workos-terminal-inner"
+        >
+          <div
+            ref={terminalRef}
+            className="workos-terminal-canvas"
+          />
+        </div>
+      </div>
+
+      <div
+        className="workos-terminal-statusbar"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          padding: '8px 16px 10px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          background: 'rgba(255, 255, 255, 0.03)',
+          color: '#7f93ab',
+          fontSize: '12px',
+          lineHeight: 1,
+        }}
+      >
+        <span>{statusText}</span>
+        <span>{terminalSize.cols} x {terminalSize.rows}</span>
+        <span>line {scrollLine}</span>
+        <span>{clockText}</span>
+      </div>
     </div>
   );
 }
