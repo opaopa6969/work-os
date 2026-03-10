@@ -37,7 +37,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.2',
+    title: 'Work OS v0.8.3',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -92,7 +92,7 @@ const translations = {
     clientsCount: 'Clients',
   },
   en: {
-    title: 'Work OS v0.8.2',
+    title: 'Work OS v0.8.3',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -191,6 +191,22 @@ export default function Home() {
   const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
   const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
   const getSessionModeLabel = (session: Session) => terminalModeMap[session.id] || session.suggestedMode || 'auto';
+  const formatRelativeTime = (epochSeconds?: number) => {
+    if (!epochSeconds) {
+      return '-';
+    }
+    const diff = Math.max(0, Math.floor(Date.now() / 1000) - epochSeconds);
+    if (diff < 60) {
+      return `${diff}s ago`;
+    }
+    if (diff < 3600) {
+      return `${Math.floor(diff / 60)}m ago`;
+    }
+    if (diff < 86400) {
+      return `${Math.floor(diff / 3600)}h ago`;
+    }
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
   const compactPath = (value?: string) => {
     if (!value) {
       return '-';
@@ -692,6 +708,9 @@ export default function Home() {
                 <div style={{ color: '#d7e3f4', fontSize: '0.85rem' }}>
                   clients: {clientsDialog.clients.length} / raw lines: {clientsDialog.raw ? clientsDialog.raw.split('\n').length : 0}
                 </div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
+                  last activity: {formatRelativeTime(Math.max(0, ...clientsDialog.clients.map((client) => client.activity || 0)))}
+                </div>
               </div>
               <button
                 onClick={() => runClientAction(clientsDialog.sessionId, null, 'detach-all')}
@@ -741,6 +760,8 @@ export default function Home() {
                         <div>pid: {client.pid}</div>
                         <div>size: {client.size}</div>
                         <div>term: {client.termname}</div>
+                        <div>created: {formatRelativeTime(client.created)}</div>
+                        <div>activity: {formatRelativeTime(client.activity)}</div>
                       </div>
                     </div>
                   );
