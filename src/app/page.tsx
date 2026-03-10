@@ -37,7 +37,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.3',
+    title: 'Work OS v0.8.4',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -79,6 +79,7 @@ const translations = {
     bigger: '大きく',
     smaller: '小さく',
     clients: 'Clients',
+    refresh: 'Refresh',
     close: '閉じる',
     noClients: '接続中 client はありません',
     readOnlyMirror: 'read-only',
@@ -92,7 +93,7 @@ const translations = {
     clientsCount: 'Clients',
   },
   en: {
-    title: 'Work OS v0.8.3',
+    title: 'Work OS v0.8.4',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -134,6 +135,7 @@ const translations = {
     bigger: 'Larger',
     smaller: 'Smaller',
     clients: 'Clients',
+    refresh: 'Refresh',
     close: 'Close',
     noClients: 'No attached clients',
     readOnlyMirror: 'read-only',
@@ -687,7 +689,15 @@ export default function Home() {
                 <div style={{ color: '#9ecbff', fontSize: '0.8rem' }}>tmux list-clients</div>
                 <div style={{ color: '#fff', fontWeight: 700 }}>{clientsDialog.sessionId}</div>
               </div>
-              <button onClick={() => setClientsDialog(null)} style={{ background: 'transparent', color: '#fff', border: '1px solid #334155', fontSize: '0.75rem' }}>{t.close}</button>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button
+                  onClick={() => loadClientsDialog(clientsDialog.sessionId)}
+                  style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.75rem' }}
+                >
+                  {clientsLoading === clientsDialog.sessionId ? '...' : t.refresh}
+                </button>
+                <button onClick={() => setClientsDialog(null)} style={{ background: 'transparent', color: '#fff', border: '1px solid #334155', fontSize: '0.75rem' }}>{t.close}</button>
+              </div>
             </div>
             <div
               style={{
