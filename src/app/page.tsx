@@ -38,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.6',
+    title: 'Work OS v0.8.7',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -81,6 +81,7 @@ const translations = {
     smaller: '小さく',
     clients: 'Clients',
     refresh: 'Refresh',
+    live: 'Live',
     close: '閉じる',
     noClients: '接続中 client はありません',
     readOnlyMirror: 'read-only',
@@ -97,7 +98,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.6',
+    title: 'Work OS v0.8.7',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -140,6 +141,7 @@ const translations = {
     smaller: 'Smaller',
     clients: 'Clients',
     refresh: 'Refresh',
+    live: 'Live',
     close: 'Close',
     noClients: 'No attached clients',
     readOnlyMirror: 'read-only',
@@ -492,6 +494,16 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [proxyMap, autoYesMap, userInteractedAt, killedSessionIds]);
 
+  useEffect(() => {
+    if (!clientsDialog) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      loadClientsDialog(clientsDialog.sessionId);
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [clientsDialog?.sessionId]);
+
   return (
     <main>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -783,6 +795,18 @@ export default function Home() {
                 <div style={{ color: '#fff', fontWeight: 700 }}>{clientsDialog.sessionId}</div>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <span
+                  style={{
+                    color: '#4ade80',
+                    border: '1px solid rgba(74, 222, 128, 0.35)',
+                    background: 'rgba(20, 83, 45, 0.22)',
+                    borderRadius: '999px',
+                    padding: '0.12rem 0.5rem',
+                    fontSize: '0.72rem',
+                  }}
+                >
+                  {t.live}
+                </span>
                 <button
                   onClick={() => loadClientsDialog(clientsDialog.sessionId)}
                   style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.75rem' }}
