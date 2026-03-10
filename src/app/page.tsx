@@ -31,7 +31,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.7.8',
+    title: 'Work OS v0.7.9',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -76,9 +76,12 @@ const translations = {
     close: '閉じる',
     noClients: '接続中 client はありません',
     readOnlyMirror: 'read-only',
+    detach: 'Detach',
+    killClient: 'Kill PID',
+    readOnlyBadge: 'READ ONLY',
   },
   en: {
-    title: 'Work OS v0.7.8',
+    title: 'Work OS v0.7.9',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -123,6 +126,9 @@ const translations = {
     close: 'Close',
     noClients: 'No attached clients',
     readOnlyMirror: 'read-only',
+    detach: 'Detach',
+    killClient: 'Kill PID',
+    readOnlyBadge: 'READ ONLY',
   }
 };
 
@@ -149,9 +155,19 @@ export default function Home() {
   const [clientsDialog, setClientsDialog] = useState<{
     sessionId: string;
     raw: string;
-    clients: Array<{ raw: string }>;
+    clients: Array<{
+      raw: string;
+      name: string;
+      pid: number;
+      tty: string;
+      size: string;
+      created: number;
+      activity: number;
+      termname: string;
+    }>;
   } | null>(null);
   const [clientsLoading, setClientsLoading] = useState<string | null>(null);
+  const [clientActionKey, setClientActionKey] = useState<string | null>(null);
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
@@ -333,7 +349,7 @@ export default function Home() {
     }
   };
 
-  const openClientsDialog = async (id: string) => {
+  const loadClientsDialog = async (id: string) => {
     setClientsLoading(id);
     try {
       const res = await fetch(`/api/sessions/${id}/clients`);
@@ -352,6 +368,35 @@ export default function Home() {
       });
     } finally {
       setClientsLoading(null);
+    }
+  };
+
+  const openClientsDialog = async (id: string) => {
+    await loadClientsDialog(id);
+  };
+
+  const runClientAction = async (
+    sessionId: string,
+    client: { tty: string; pid: number },
+    action: 'detach' | 'kill'
+  ) => {
+    const actionKey = `${sessionId}:${client.tty}:${action}`;
+    setClientActionKey(actionKey);
+    try {
+      await fetch(`/api/sessions/${sessionId}/clients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          tty: client.tty,
+          pid: client.pid,
+        }),
+      });
+      await loadClientsDialog(sessionId);
+    } catch (error) {
+      console.error('Failed to control client', error);
+    } finally {
+      setClientActionKey(null);
     }
   };
 
@@ -478,6 +523,9 @@ export default function Home() {
                       <option value="attach">attach</option>
                       <option value="resize-client">resize-client</option>
                     </select>
+                    {(terminalModeMap[session.id] || 'auto') === 'readonly-mirror' ? (
+                      <span style={{ fontSize: '0.68rem', color: '#e6c66b', border: '1px solid rgba(230,198,107,0.35)', borderRadius: '999px', padding: '0.12rem 0.5rem' }}>{t.readOnlyBadge}</span>
+                    ) : null}
                     <button onClick={() => changeTerminalHeight(session.id, -120)} style={{ background: 'transparent', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem' }}>{t.smaller}</button>
                     <button onClick={() => changeTerminalHeight(session.id, 120)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>{t.bigger}</button>
                     <span className={`session-status ${session.isAttached ? 'status-active' : ''}`}>{session.isAttached ? 'Attached' : 'Idle'}</span>
@@ -517,6 +565,9 @@ export default function Home() {
                         <option value="mirror">mirror</option>
                         <option value="readonly-mirror">{t.readOnlyMirror}</option>
                       </select>
+                      {(terminalModeMap[shell.id] || 'attach') === 'readonly-mirror' ? (
+                        <span style={{ fontSize: '0.68rem', color: '#e6c66b', border: '1px solid rgba(230,198,107,0.35)', borderRadius: '999px', padding: '0.12rem 0.5rem' }}>{t.readOnlyBadge}</span>
+                      ) : null}
                       <button onClick={() => changeTerminalHeight(shell.id, -120)} style={{ background: 'transparent', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem' }}>{t.smaller}</button>
                       <button onClick={() => changeTerminalHeight(shell.id, 120)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>{t.bigger}</button>
                       <span className="session-status status-active">LIVE</span>
@@ -576,7 +627,51 @@ export default function Home() {
             </div>
             {clientsDialog.clients.length === 0 ? (
               <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>{t.noClients}</div>
-            ) : null}
+            ) : (
+              <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
+                {clientsDialog.clients.map((client) => {
+                  const detachKey = `${clientsDialog.sessionId}:${client.tty}:detach`;
+                  const killKey = `${clientsDialog.sessionId}:${client.tty}:kill`;
+                  return (
+                    <div
+                      key={client.raw}
+                      style={{
+                        display: 'grid',
+                        gap: '0.5rem',
+                        padding: '0.85rem',
+                        borderRadius: '12px',
+                        border: '1px solid #1e293b',
+                        background: '#08111f',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ color: '#d7e3f4', fontWeight: 600 }}>{client.name || client.tty}</div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            onClick={() => runClientAction(clientsDialog.sessionId, client, 'detach')}
+                            style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.72rem' }}
+                          >
+                            {clientActionKey === detachKey ? '...' : t.detach}
+                          </button>
+                          <button
+                            onClick={() => runClientAction(clientsDialog.sessionId, client, 'kill')}
+                            style={{ background: 'transparent', color: '#ffb4b4', border: '1px solid #4c2323', fontSize: '0.72rem' }}
+                          >
+                            {clientActionKey === killKey ? '...' : t.killClient}
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.5rem', color: '#94a3b8', fontSize: '0.78rem' }}>
+                        <div>tty: {client.tty}</div>
+                        <div>pid: {client.pid}</div>
+                        <div>size: {client.size}</div>
+                        <div>term: {client.termname}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <pre
               style={{
                 margin: 0,

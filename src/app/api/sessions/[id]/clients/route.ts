@@ -43,3 +43,40 @@ export async function GET(
     );
   }
 }
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
+  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+
+  try {
+    const { action, tty, pid } = await request.json();
+
+    if (action === 'detach') {
+      if (!tty) {
+        return NextResponse.json({ error: 'tty is required' }, { status: 400 });
+      }
+      execSync(getTmuxCmd(`detach-client -t "${tty}"`), { encoding: 'utf-8' });
+      return NextResponse.json({ ok: true, action, tty, sessionId: id });
+    }
+
+    if (action === 'kill') {
+      const targetPid = Number.parseInt(String(pid || 0), 10);
+      if (!targetPid) {
+        return NextResponse.json({ error: 'pid is required' }, { status: 400 });
+      }
+      process.kill(targetPid, 'SIGTERM');
+      return NextResponse.json({ ok: true, action, pid: targetPid, sessionId: id });
+    }
+
+    return NextResponse.json({ error: 'unsupported action' }, { status: 400 });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: `Failed to control tmux clients: ${id}`, details: error.message },
+      { status: 500 }
+    );
+  }
+}
