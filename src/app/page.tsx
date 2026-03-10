@@ -38,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.5',
+    title: 'Work OS v0.8.6',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -97,7 +97,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.5',
+    title: 'Work OS v0.8.6',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -201,6 +201,25 @@ export default function Home() {
   const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
   const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
   const getSessionModeLabel = (session: Session) => terminalModeMap[session.id] || session.suggestedMode || 'auto';
+  const getActivityTone = (epochSeconds?: number) => {
+    if (!epochSeconds) {
+      return { color: '#5f6b7a', border: '#1f2937', background: 'rgba(15, 23, 42, 0.45)' };
+    }
+    const diff = Math.max(0, Math.floor(Date.now() / 1000) - epochSeconds);
+    if (diff < 60) {
+      return { color: '#4ade80', border: 'rgba(74, 222, 128, 0.35)', background: 'rgba(20, 83, 45, 0.22)' };
+    }
+    if (diff < 300) {
+      return { color: '#facc15', border: 'rgba(250, 204, 21, 0.32)', background: 'rgba(113, 63, 18, 0.18)' };
+    }
+    return { color: '#94a3b8', border: '#23374c', background: 'rgba(8, 17, 31, 0.75)' };
+  };
+  const getClientTone = (count?: number) => {
+    if ((count || 0) > 0) {
+      return { color: '#9ecbff', border: '#23374c', background: 'rgba(14, 44, 76, 0.28)' };
+    }
+    return { color: '#66758a', border: '#1f2937', background: 'rgba(15, 23, 42, 0.35)' };
+  };
   const formatRelativeTime = (epochSeconds?: number) => {
     if (!epochSeconds) {
       return '-';
@@ -567,6 +586,8 @@ export default function Home() {
           const childShells = sessions.filter(s => s.name.startsWith(`sh-${session.name}-`));
           const lastInteraction = userInteractedAt[session.id] || 0;
           const isInterrupted = (Date.now() - lastInteraction) < 30000;
+          const sessionActivityTone = getActivityTone(session.lastActivity);
+          const sessionClientTone = getClientTone(session.clientCount);
           return (
             <div key={session.id} style={{ display: 'contents' }}>
               <div id={`card-${session.id}`} className="session-card" style={{ opacity: sendingStatus[session.id] ? 0.7 : 1, transition: 'opacity 0.2s', border: session.isWaitingForInput ? '1px solid #ffeb3b' : '1px solid var(--card-border)' }}>
@@ -602,11 +623,29 @@ export default function Home() {
                     <span>{t.mode}: {getSessionModeLabel(session)}</span>
                     <button
                       onClick={() => openClientsDialog(session.id)}
-                      style={{ background: 'transparent', color: '#9ecbff', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                      style={{
+                        background: sessionClientTone.background,
+                        color: sessionClientTone.color,
+                        border: `1px solid ${sessionClientTone.border}`,
+                        padding: '0.08rem 0.45rem',
+                        fontSize: '0.72rem',
+                        cursor: 'pointer',
+                        borderRadius: '999px',
+                      }}
                     >
                       {t.clientsCount}: {session.clientCount || 0}
                     </button>
-                    <span>{t.activity}: {formatRelativeTime(session.lastActivity)}</span>
+                    <span
+                      style={{
+                        color: sessionActivityTone.color,
+                        border: `1px solid ${sessionActivityTone.border}`,
+                        background: sessionActivityTone.background,
+                        borderRadius: '999px',
+                        padding: '0.08rem 0.45rem',
+                      }}
+                    >
+                      {t.activity}: {formatRelativeTime(session.lastActivity)}
+                    </span>
                     <button
                       onClick={() => copyPath(session.id, session.currentPath || session.directory)}
                       title={session.currentPath || session.directory || '-'}
@@ -662,11 +701,29 @@ export default function Home() {
                       <span>{t.mode}: {getSessionModeLabel(shell)}</span>
                       <button
                         onClick={() => openClientsDialog(shell.id)}
-                        style={{ background: 'transparent', color: '#9ecbff', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                        style={{
+                          background: getClientTone(shell.clientCount).background,
+                          color: getClientTone(shell.clientCount).color,
+                          border: `1px solid ${getClientTone(shell.clientCount).border}`,
+                          padding: '0.08rem 0.45rem',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer',
+                          borderRadius: '999px',
+                        }}
                       >
                         {t.clientsCount}: {shell.clientCount || 0}
                       </button>
-                      <span>{t.activity}: {formatRelativeTime(shell.lastActivity)}</span>
+                      <span
+                        style={{
+                          color: getActivityTone(shell.lastActivity).color,
+                          border: `1px solid ${getActivityTone(shell.lastActivity).border}`,
+                          background: getActivityTone(shell.lastActivity).background,
+                          borderRadius: '999px',
+                          padding: '0.08rem 0.45rem',
+                        }}
+                      >
+                        {t.activity}: {formatRelativeTime(shell.lastActivity)}
+                      </span>
                       <button
                         onClick={() => copyPath(shell.id, shell.currentPath || shell.directory)}
                         title={shell.currentPath || shell.directory || '-'}
