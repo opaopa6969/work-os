@@ -354,14 +354,34 @@ export default function Terminal({ sessionId, onClose, preferredMode = 'auto', h
           background: 'linear-gradient(180deg, #091425 0%, #08111f 100%)',
         }}
       >
-        <div
-          ref={terminalBodyRef}
-          className="workos-terminal-inner"
-        >
+      <div
+        ref={terminalBodyRef}
+        className="workos-terminal-inner"
+      >
+        {readOnly ? (
           <div
-            ref={terminalRef}
-            className="workos-terminal-canvas"
-          />
+            style={{
+              position: 'absolute',
+              top: '12px',
+              right: '14px',
+              zIndex: 5,
+              padding: '0.25rem 0.55rem',
+              borderRadius: '999px',
+              border: '1px solid rgba(230,198,107,0.35)',
+              background: 'rgba(230,198,107,0.14)',
+              color: '#f5d98d',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+            }}
+          >
+            INPUT DISABLED
+          </div>
+        ) : null}
+        <div
+          ref={terminalRef}
+          className="workos-terminal-canvas"
+        />
         </div>
       </div>
 

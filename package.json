@@ -1,6 +1,6 @@
 {
   "name": "work-os",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "scripts": {
     "dev": "ts-node --project tsconfig.server.json src/server.ts",

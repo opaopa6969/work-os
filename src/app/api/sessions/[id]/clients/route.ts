@@ -55,6 +55,18 @@ export async function POST(
   try {
     const { action, tty, pid } = await request.json();
 
+    if (action === 'detach-all') {
+      const output = execSync(
+        getTmuxCmd(`list-clients -t "${id}" -F "#{client_tty}"`),
+        { encoding: 'utf-8' }
+      ).trim();
+      const ttys = output ? output.split('\n').filter(Boolean) : [];
+      for (const currentTty of ttys) {
+        execSync(getTmuxCmd(`detach-client -t "${currentTty}"`), { encoding: 'utf-8' });
+      }
+      return NextResponse.json({ ok: true, action, sessionId: id, detached: ttys });
+    }
+
     if (action === 'detach') {
       if (!tty) {
         return NextResponse.json({ error: 'tty is required' }, { status: 400 });

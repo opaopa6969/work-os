@@ -31,7 +31,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.7.9',
+    title: 'Work OS v0.8.0',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -79,9 +79,11 @@ const translations = {
     detach: 'Detach',
     killClient: 'Kill PID',
     readOnlyBadge: 'READ ONLY',
+    detachAll: 'Detach All',
+    clientSummary: 'Summary',
   },
   en: {
-    title: 'Work OS v0.7.9',
+    title: 'Work OS v0.8.0',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -129,6 +131,8 @@ const translations = {
     detach: 'Detach',
     killClient: 'Kill PID',
     readOnlyBadge: 'READ ONLY',
+    detachAll: 'Detach All',
+    clientSummary: 'Summary',
   }
 };
 
@@ -377,10 +381,10 @@ export default function Home() {
 
   const runClientAction = async (
     sessionId: string,
-    client: { tty: string; pid: number },
-    action: 'detach' | 'kill'
+    client: { tty: string; pid: number } | null,
+    action: 'detach' | 'kill' | 'detach-all'
   ) => {
-    const actionKey = `${sessionId}:${client.tty}:${action}`;
+    const actionKey = `${sessionId}:${client?.tty || 'all'}:${action}`;
     setClientActionKey(actionKey);
     try {
       await fetch(`/api/sessions/${sessionId}/clients`, {
@@ -388,8 +392,8 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
-          tty: client.tty,
-          pid: client.pid,
+          tty: client?.tty,
+          pid: client?.pid,
         }),
       });
       await loadClientsDialog(sessionId);
@@ -624,6 +628,33 @@ export default function Home() {
                 <div style={{ color: '#fff', fontWeight: 700 }}>{clientsDialog.sessionId}</div>
               </div>
               <button onClick={() => setClientsDialog(null)} style={{ background: 'transparent', color: '#fff', border: '1px solid #334155', fontSize: '0.75rem' }}>{t.close}</button>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                padding: '0.85rem',
+                marginBottom: '1rem',
+                borderRadius: '12px',
+                border: '1px solid #1e293b',
+                background: '#08111f',
+              }}
+            >
+              <div style={{ display: 'grid', gap: '0.3rem' }}>
+                <div style={{ color: '#9ecbff', fontSize: '0.8rem' }}>{t.clientSummary}</div>
+                <div style={{ color: '#d7e3f4', fontSize: '0.85rem' }}>
+                  clients: {clientsDialog.clients.length} / raw lines: {clientsDialog.raw ? clientsDialog.raw.split('\n').length : 0}
+                </div>
+              </div>
+              <button
+                onClick={() => runClientAction(clientsDialog.sessionId, null, 'detach-all')}
+                style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.75rem' }}
+              >
+                {clientActionKey === `${clientsDialog.sessionId}:all:detach-all` ? '...' : t.detachAll}
+              </button>
             </div>
             {clientsDialog.clients.length === 0 ? (
               <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>{t.noClients}</div>
