@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
 import { execSync } from 'child_process';
+import fs from 'fs-extra';
+import path from 'path';
+
+const USER_TEMPLATES_DIR = path.join(process.cwd(), 'templates/user');
+
+const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
+const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
 
 export async function GET() {
   try {
-    // tmux ls を実行し、必要な情報をカンマ区切りで取得
-    // フォーマット: session_name, session_created, session_attached
-    const output = execSync("tmux -S /tmp/tmux-1000/default ls -F '#{session_name},#{session_created},#{session_attached}'", { encoding: 'utf-8' });
+    const output = execSync(getTmuxCmd("ls -F '#{session_name},#{session_created},#{session_attached}'"), { encoding: 'utf-8' });
     
     const sessions = output.trim().split('\n').map(line => {
       const [name, created, attached] = line.split(',');
@@ -19,7 +24,6 @@ export async function GET() {
 
     return NextResponse.json({ sessions });
   } catch (error: any) {
-    // tmux が起動していない場合は空の配列を返すか、エラーを返す
     if (error.message.includes('error connecting to')) {
       return NextResponse.json({ sessions: [] });
     }
@@ -29,18 +33,34 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { name, command, cwd } = await request.json();
+    const { name, command, cwd, templateName } = await request.json();
 
     if (!name || !command) {
       return NextResponse.json({ error: 'Name and command are required' }, { status: 400 });
     }
 
-    // 新しい tmux セッションをバックグラウンドで開始
-    // -d: デタッチ状態で開始, -s: セッション名, -c: 開始ディレクトリ
-    const dirOption = cwd ? `-c "${cwd}"` : '';
-    execSync(`tmux new-session -d -s "${name}" ${dirOption} "${command}"`);
+    // テンプレートの適用
+    if (templateName && cwd) {
+      const templatePath = path.join(USER_TEMPLATES_DIR, templateName);
+      if (fs.existsSync(templatePath)) {
+        await fs.ensureDir(cwd);
+        // テンプレートの中身を cwd にコピー (AGENT.MD 等)
+        // 既存ファイルを壊さないように overwrite: false
+        await fs.copy(templatePath, cwd, { overwrite: false });
+      }
+    }
 
-    return NextResponse.json({ message: `Session ${name} started in ${cwd || 'default dir'} with command: ${command}` });
+    // 新しい tmux セッションをバックグラウンドで開始
+    const SOCKET = '/tmp/tmux-1000/default';
+    const dirOption = cwd ? `-c "${cwd}"` : '';
+    
+    // エージェントコマンドの構築
+    // テンプレート適用時は AGENT.MD を自動的に読み込ませる引数を追加
+    const finalCommand = templateName ? `${command} AGENT.MD` : command;
+
+    execSync(getTmuxCmd(`new-session -d -s "${name}" ${dirOption} "${finalCommand}"`));
+
+    return NextResponse.json({ message: `Session ${name} started` });
   } catch (error: any) {
     return NextResponse.json({ error: 'Failed to start tmux session', details: error.message }, { status: 500 });
   }

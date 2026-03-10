@@ -7,9 +7,12 @@ export async function GET(
 ) {
   const { id } = await params;
 
+  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
+  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+
   try {
     // 指定したセッションのペインをキャプチャして取得
-    const output = execSync(`tmux -S /tmp/tmux-1000/default capture-pane -pt "${id}"`, { encoding: 'utf-8' });
+    const output = execSync(getTmuxCmd(`capture-pane -pt "${id}"`), { encoding: 'utf-8' });
 
     // 入力待ち判定ロジック (y/n, [y/N], Proceed?, 1. Allow once, etc.)
     const lines = output.trim().split('\n');
@@ -36,8 +39,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
+  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
   try {
-    execSync(`tmux kill-session -t "${id}"`);
+    execSync(getTmuxCmd(`kill-session -t "${id}"`));
     return NextResponse.json({ message: `Session ${id} killed` });
   } catch (error: any) {
     return NextResponse.json({ error: `Failed to kill tmux session: ${id}`, details: error.message }, { status: 500 });

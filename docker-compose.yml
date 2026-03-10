@@ -12,6 +12,8 @@ services:
       - /mnt/c/var/work:/mnt/c/var/work
     environment:
       - NODE_ENV=production
+      - PORT=3000
+      - TMUX_SOCKET=/tmp/tmux-1000/default
       # tmux ソケットの場所を明示
       - TMUX_TMPDIR=/tmp
       # ホスト側のエージェントに任せるため、コンテナ内でのコマンド実行パスを合わせる
@@ -20,9 +22,10 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: work-os-tunnel
+    user: root
     restart: always
     volumes:
-      - /home/opa/.cloudflared:/home/nonroot/.cloudflared
-    command: tunnel run --url http://app:3000 work-os
+      - /home/opa/.cloudflared:/etc/cloudflared
+    command: tunnel --cred-file /etc/cloudflared/19a30aca-d60d-465a-81f0-85687ecffcfc.json run --url http://app:3000 19a30aca-d60d-465a-81f0-85687ecffcfc
     depends_on:
       - app
