@@ -37,7 +37,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.1',
+    title: 'Work OS v0.8.2',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -92,7 +92,7 @@ const translations = {
     clientsCount: 'Clients',
   },
   en: {
-    title: 'Work OS v0.8.1',
+    title: 'Work OS v0.8.2',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -191,6 +191,15 @@ export default function Home() {
   const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
   const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
   const getSessionModeLabel = (session: Session) => terminalModeMap[session.id] || session.suggestedMode || 'auto';
+  const compactPath = (value?: string) => {
+    if (!value) {
+      return '-';
+    }
+    if (value.length <= 44) {
+      return value;
+    }
+    return `...${value.slice(-41)}`;
+  };
   const changeTerminalHeight = (id: string, delta: number) => {
     setTerminalHeightMap((prev) => ({
       ...prev,
@@ -549,11 +558,16 @@ export default function Home() {
                   </div>
                 </div>
                 <div style={{ marginTop: '0.5rem' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem' }}>
-                    <div>{t.mode}: {getSessionModeLabel(session)}</div>
-                    <div>{t.clientsCount}: {session.clientCount || 0}</div>
-                    <div>{t.cwd}: {session.currentPath || session.directory || '-'}</div>
-                    <div>cmd: {session.currentCommand || session.command || '-'}</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem 0.8rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem', lineHeight: 1.3 }}>
+                    <span>{t.mode}: {getSessionModeLabel(session)}</span>
+                    <button
+                      onClick={() => openClientsDialog(session.id)}
+                      style={{ background: 'transparent', color: '#9ecbff', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                    >
+                      {t.clientsCount}: {session.clientCount || 0}
+                    </button>
+                    <span title={session.currentPath || session.directory || '-'}>{t.cwd}: {compactPath(session.currentPath || session.directory)}</span>
+                    <span title={session.currentCommand || session.command || '-'}>cmd: {session.currentCommand || session.command || '-'}</span>
                   </div>
                   <Terminal
                     key={`${session.id}:${terminalModeMap[session.id] || 'auto'}:${getTerminalHeight(session.id)}`}
@@ -597,11 +611,16 @@ export default function Home() {
                     </div>
                   </div>
                   <div style={{ marginTop: '0.5rem' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem' }}>
-                      <div>{t.mode}: {getSessionModeLabel(shell)}</div>
-                      <div>{t.clientsCount}: {shell.clientCount || 0}</div>
-                      <div>{t.cwd}: {shell.currentPath || shell.directory || '-'}</div>
-                      <div>cmd: {shell.currentCommand || shell.command || '-'}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem 0.8rem', marginBottom: '0.75rem', color: '#8fa3ba', fontSize: '0.74rem', lineHeight: 1.3 }}>
+                      <span>{t.mode}: {getSessionModeLabel(shell)}</span>
+                      <button
+                        onClick={() => openClientsDialog(shell.id)}
+                        style={{ background: 'transparent', color: '#9ecbff', border: 'none', padding: 0, fontSize: '0.74rem', cursor: 'pointer' }}
+                      >
+                        {t.clientsCount}: {shell.clientCount || 0}
+                      </button>
+                      <span title={shell.currentPath || shell.directory || '-'}>{t.cwd}: {compactPath(shell.currentPath || shell.directory)}</span>
+                      <span title={shell.currentCommand || shell.command || '-'}>cmd: {shell.currentCommand || shell.command || '-'}</span>
                     </div>
                     <Terminal
                       key={`${shell.id}:${getTerminalHeight(shell.id)}`}
