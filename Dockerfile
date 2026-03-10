@@ -1,9 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 # ビルドに必要なツールと tmux
-RUN apk add --no-cache tmux git curl bash openssh-client python3 make g++
+RUN apt-get update && apt-get install -y \
+    tmux \
+    git \
+    curl \
+    bash \
+    openssh-client \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -14,11 +23,9 @@ RUN npm install
 # ソースのコピー
 COPY . .
 
-# ビルド (Next.js + Custom Server)
-RUN npm run build
-
 # ポート開放
 EXPOSE 3000
 
-# カスタムサーバーの起動
-CMD ["npm", "run", "start"]
+# 開発モードで直接起動 (ts-nodeを使用)
+# 本番ビルドの不整合を避けるため
+CMD ["npm", "run", "dev"]

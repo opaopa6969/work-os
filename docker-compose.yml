@@ -11,7 +11,7 @@ services:
       # 起動ディレクトリをホストと共有 (必要に応じて)
       - /mnt/c/var/work:/mnt/c/var/work
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
       - PORT=3000
       - TMUX_SOCKET=/tmp/tmux-1000/default
       # tmux ソケットの場所を明示

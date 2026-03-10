@@ -6,5 +6,5 @@
     "outDir": "dist",
     "noEmit": false
   },
-  "include": ["src/server.ts"]
+  "include": ["src/server.ts", "src/server-minimal.ts"]
 }
