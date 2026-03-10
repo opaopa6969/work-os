@@ -10,7 +10,7 @@ interface TerminalProps {
   sessionId: string;
   onClose?: () => void;
   syncSize?: boolean;
-  preferredMode?: 'auto' | 'attach' | 'resize-client' | 'mirror';
+  preferredMode?: 'auto' | 'attach' | 'resize-client' | 'mirror' | 'readonly-mirror';
   height?: number;
 }
 
@@ -23,12 +23,14 @@ export default function Terminal({ sessionId, onClose, preferredMode = 'auto', h
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const readOnlyRef = useRef(false);
   const [isAltMode, setIsAltMode] = useState(false);
   const [status, setStatus] = useState<TerminalStatus>('idle');
   const [statusText, setStatusText] = useState('未接続');
   const [terminalSize, setTerminalSize] = useState({ cols: 0, rows: 0 });
   const [scrollLine, setScrollLine] = useState(1);
   const [clockText, setClockText] = useState('');
+  const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
     if (!containerRef.current || !terminalRef.current || !terminalBodyRef.current) {
@@ -136,10 +138,13 @@ export default function Terminal({ sessionId, onClose, preferredMode = 'auto', h
         });
       });
 
-      socket.on('terminal:status', (payload: { state?: string; sessionId?: string; message?: string }) => {
+      socket.on('terminal:status', (payload: { state?: string; sessionId?: string; message?: string; readOnly?: boolean }) => {
         if (!mounted) {
           return;
         }
+        const nextReadOnly = Boolean(payload?.readOnly);
+        readOnlyRef.current = nextReadOnly;
+        setReadOnly(nextReadOnly);
         if (payload?.state === 'ready') {
           setStatus('ready');
           setStatusText(payload.message || `LIVE: ${payload?.sessionId || sessionId}`);
@@ -202,6 +207,9 @@ export default function Terminal({ sessionId, onClose, preferredMode = 'auto', h
       });
 
       term.onData((data) => {
+        if (readOnlyRef.current) {
+          return;
+        }
         if (socket.connected) {
           socket.emit('command', { data });
         }
@@ -278,7 +286,7 @@ export default function Terminal({ sessionId, onClose, preferredMode = 'auto', h
   const borderColor = status === 'error' ? 'rgba(255, 123, 114, 0.55)' : 'rgba(255, 255, 255, 0.08)';
   const toolbarBackground = isAltMode ? 'rgba(230, 198, 107, 0.16)' : 'rgba(255, 255, 255, 0.04)';
   const toolbarColor = isAltMode ? '#e6c66b' : '#93a4ba';
-  const modeLabel = isAltMode ? 'APP MODE' : 'NORMAL MODE';
+  const modeLabel = readOnly ? 'READ ONLY' : isAltMode ? 'APP MODE' : 'NORMAL MODE';
 
   return (
     <div

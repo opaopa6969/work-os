@@ -31,7 +31,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.7.6',
+    title: 'Work OS v0.7.7',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -75,9 +75,10 @@ const translations = {
     clients: 'Clients',
     close: '閉じる',
     noClients: '接続中 client はありません',
+    readOnlyMirror: 'read-only',
   },
   en: {
-    title: 'Work OS v0.7.6',
+    title: 'Work OS v0.7.7',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -121,6 +122,7 @@ const translations = {
     clients: 'Clients',
     close: 'Close',
     noClients: 'No attached clients',
+    readOnlyMirror: 'read-only',
   }
 };
 
@@ -137,7 +139,7 @@ export default function Home() {
   const [autoYesMap, setAutoYesMap] = useState<Record<string, boolean>>({});
   const [proxyMap, setProxyMap] = useState<Record<string, string>>({});
   const [activeShellMap, setActiveShellMap] = useState<Record<string, string>>({});
-  const [terminalModeMap, setTerminalModeMap] = useState<Record<string, 'auto' | 'mirror' | 'attach' | 'resize-client'>>({});
+  const [terminalModeMap, setTerminalModeMap] = useState<Record<string, 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client'>>({});
   const [terminalHeightMap, setTerminalHeightMap] = useState<Record<string, number>>({});
   const [newSession, setNewSession] = useState({ name: '', command: '', cwd: '', templateName: '' });
   const [sendingStatus, setSendingStatus] = useState<Record<string, boolean>>({});
@@ -467,11 +469,12 @@ export default function Home() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: '#888', cursor: 'pointer' }}><input type="checkbox" checked={autoYesMap[session.id] || false} onChange={(e) => setAutoYesMap({ ...autoYesMap, [session.id]: e.target.checked })} /> {t.autoYes}</label>
                     <select
                       value={terminalModeMap[session.id] || 'auto'}
-                      onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [session.id]: e.target.value as 'auto' | 'mirror' | 'attach' | 'resize-client' }))}
+                      onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [session.id]: e.target.value as 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client' }))}
                       style={{ background: '#000', color: '#88d8cf', border: '1px solid #2d4a4a', fontSize: '0.7rem', padding: '0.15rem 0.3rem', borderRadius: '4px' }}
                     >
                       <option value="auto">auto</option>
                       <option value="mirror">mirror</option>
+                      <option value="readonly-mirror">{t.readOnlyMirror}</option>
                       <option value="attach">attach</option>
                       <option value="resize-client">resize-client</option>
                     </select>
@@ -506,12 +509,13 @@ export default function Home() {
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <select
                         value={terminalModeMap[shell.id] || 'attach'}
-                        onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [shell.id]: e.target.value as 'auto' | 'mirror' | 'attach' | 'resize-client' }))}
+                        onChange={(e) => setTerminalModeMap((prev) => ({ ...prev, [shell.id]: e.target.value as 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client' }))}
                         style={{ background: '#000', color: '#88d8cf', border: '1px solid #2d4a4a', fontSize: '0.7rem', padding: '0.15rem 0.3rem', borderRadius: '4px' }}
                       >
                         <option value="attach">attach</option>
                         <option value="resize-client">resize-client</option>
                         <option value="mirror">mirror</option>
+                        <option value="readonly-mirror">{t.readOnlyMirror}</option>
                       </select>
                       <button onClick={() => changeTerminalHeight(shell.id, -120)} style={{ background: 'transparent', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem' }}>{t.smaller}</button>
                       <button onClick={() => changeTerminalHeight(shell.id, 120)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>{t.bigger}</button>

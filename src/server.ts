@@ -21,7 +21,7 @@ const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
 const getTmuxArgs = (args: string[]) => (TMUX_SOCKET ? ['-S', TMUX_SOCKET, ...args] : args);
 
 type SessionMode = 'pty' | 'mirror';
-type SessionModePreference = 'auto' | 'mirror' | 'attach' | 'resize-client';
+type SessionModePreference = 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client';
 
 type SessionInfo = {
   sessionId: string;
@@ -31,6 +31,7 @@ type SessionInfo = {
   mode: SessionMode;
   reason: string;
   resizeStrategy: 'pty-only' | 'tmux-window';
+  readOnly: boolean;
 };
 
 type PtyBridge = {
@@ -41,6 +42,7 @@ type PtyBridge = {
   createdAt: number;
   lastActiveAt: number;
   resizeStrategy: 'pty-only' | 'tmux-window';
+  readOnly: boolean;
 };
 
 type MirrorBridge = {
@@ -53,6 +55,7 @@ type MirrorBridge = {
   lastSnapshot: string;
   info: SessionInfo;
   resizeStrategy: 'pty-only' | 'tmux-window';
+  readOnly: boolean;
 };
 
 type Bridge = PtyBridge | MirrorBridge;
@@ -88,7 +91,7 @@ function getSessionInfo(sessionId: string, preferredMode: SessionModePreference 
   const isChildShell = resolvedSessionId.startsWith('sh-');
   const detectedMode: SessionMode = attachedCount > 0 || (!isShellCommand && !isChildShell) ? 'mirror' : 'pty';
   const mode: SessionMode =
-    preferredMode === 'mirror'
+    preferredMode === 'mirror' || preferredMode === 'readonly-mirror'
       ? 'mirror'
       : preferredMode === 'attach' || preferredMode === 'resize-client'
         ? 'pty'
@@ -108,6 +111,7 @@ function getSessionInfo(sessionId: string, preferredMode: SessionModePreference 
     preferredMode === 'resize-client'
       ? 'tmux-window'
       : 'pty-only';
+  const readOnly = preferredMode === 'readonly-mirror';
 
   return {
     sessionId: resolvedSessionId,
@@ -117,6 +121,7 @@ function getSessionInfo(sessionId: string, preferredMode: SessionModePreference 
     mode,
     reason,
     resizeStrategy,
+    readOnly,
   };
 }
 
@@ -244,6 +249,7 @@ function ensurePtyBridge(io: Server, info: SessionInfo, cols: number, rows: numb
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
     resizeStrategy: info.resizeStrategy,
+    readOnly: false,
   };
 
   ptyProcess.onData((data) => {
@@ -326,6 +332,7 @@ function ensureMirrorBridge(io: Server, info: SessionInfo) {
     lastSnapshot: '',
     info,
     resizeStrategy: info.resizeStrategy,
+    readOnly: info.readOnly,
   };
 
   bridges.set(info.sessionId, bridge);
@@ -376,6 +383,7 @@ app
         const rows = Number(payload?.rows || 0);
         const preferredMode: SessionModePreference =
           payload?.preferredMode === 'mirror' ||
+          payload?.preferredMode === 'readonly-mirror' ||
           payload?.preferredMode === 'attach' ||
           payload?.preferredMode === 'resize-client'
             ? payload.preferredMode
@@ -391,7 +399,12 @@ app
         try {
           const info = getSessionInfo(sessionId, preferredMode);
           const existing = bridges.get(info.sessionId);
-          if (existing && (existing.mode !== info.mode || existing.resizeStrategy !== info.resizeStrategy)) {
+          if (
+            existing &&
+            (existing.mode !== info.mode ||
+              existing.resizeStrategy !== info.resizeStrategy ||
+              existing.readOnly !== info.readOnly)
+          ) {
             destroyBridge(info.sessionId);
           }
           const bridge =
@@ -406,6 +419,7 @@ app
             state: 'ready',
             sessionId: info.sessionId,
             message: `${info.mode.toUpperCase()}: ${info.reason}`,
+            readOnly: info.readOnly,
           });
 
           if (info.mode === 'mirror') {
@@ -433,6 +447,9 @@ app
         }
         bridge.lastActiveAt = Date.now();
         const data = String(payload?.data || '');
+        if (bridge.readOnly) {
+          return;
+        }
         if (bridge.mode === 'pty') {
           bridge.ptyProcess.write(data);
           return;
