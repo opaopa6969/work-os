@@ -6,17 +6,15 @@ services:
       - "3000:3000"
     restart: always
     volumes:
-      # ホストの tmux ソケットをマウント (UID=1000 の場合)
       - /tmp/tmux-1000:/tmp/tmux-1000
-      # 起動ディレクトリをホストと共有 (必要に応じて)
-      - /mnt/c/var/work:/mnt/c/var/work
+      - /mnt/c/var:/mnt/c/var
     environment:
       - NODE_ENV=development
       - PORT=3000
+      - HOSTNAME=0.0.0.0
       - TMUX_SOCKET=/tmp/tmux-1000/default
-      # tmux ソケットの場所を明示
       - TMUX_TMPDIR=/tmp
-      # ホスト側のエージェントに任せるため、コンテナ内でのコマンド実行パスを合わせる
+      - NEXT_TELEMETRY_DISABLED=1
       - PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
   tunnel:

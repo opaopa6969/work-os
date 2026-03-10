@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
 WORKDIR /app
 
 # 依存関係のインストール
@@ -23,9 +26,6 @@ RUN npm install
 # ソースのコピー
 COPY . .
 
-# ポート開放
 EXPOSE 3000
 
-# 開発モードで直接起動 (ts-nodeを使用)
-# 本番ビルドの不整合を避けるため
 CMD ["npm", "run", "dev"]
