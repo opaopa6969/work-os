@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import fs from 'fs-extra';
 import path from 'path';
 
@@ -9,8 +9,8 @@ const RUNTIME_SESSIONS_DIR = process.env.WORK_OS_RUNTIME_DIR || '/tmp/workos-run
 
 const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
 
-function getTmuxArgs(args: string[]) {
-  return TMUX_SOCKET ? ['-S', TMUX_SOCKET, ...args] : args;
+function getTmuxCmd(cmd: string) {
+  return TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
 }
 
 function sanitizeSessionName(input: string) {
@@ -107,17 +107,9 @@ ${templateInstruction.trim() || 'この role には追加テンプレート本�
 
 export async function GET() {
   try {
-    const output = execFileSync(
-      'tmux',
-      getTmuxArgs([
-        'ls',
-        '-F',
-        '#{session_name}\t#{session_created}\t#{session_attached}\t#{@workos_command}\t#{@workos_directory}\t#{@workos_role}\t#{@workos_instruction_path}',
-      ]),
-      {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }
+    const output = execSync(
+      getTmuxCmd(`ls -F '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}'`),
+      { encoding: 'utf-8' }
     );
 
     const sessions = output
@@ -125,28 +117,32 @@ export async function GET() {
       .split('\n')
       .filter(Boolean)
       .map((line) => {
-        const [name, created, attached, command, directory, role, instructionPath] = line.split('\t');
-        const currentCommand = execFileSync(
-          'tmux',
-          getTmuxArgs(['display-message', '-p', '-t', name, '#{pane_current_command}']),
-          { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+        const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
+        const currentCommand = execSync(
+          getTmuxCmd(`display-message -p -t ${shellEscape(name)} '#{pane_current_command}'`),
+          { encoding: 'utf-8' }
         ).trim();
-        const currentPath = execFileSync(
-          'tmux',
-          getTmuxArgs(['display-message', '-p', '-t', name, '#{pane_current_path}']),
-          { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+        const currentPath = execSync(
+          getTmuxCmd(`display-message -p -t ${shellEscape(name)} '#{pane_current_path}'`),
+          { encoding: 'utf-8' }
         ).trim();
-        const clientOutput = execFileSync(
-          'tmux',
-          getTmuxArgs(['list-clients', '-t', name, '-F', '#{client_tty}\t#{client_activity}']),
-          { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
-        ).trim();
+
+        let clientOutput = '';
+        try {
+          clientOutput = execSync(
+            getTmuxCmd(`list-clients -t ${shellEscape(name)} -F '#{client_tty}__WORKOS__#{client_activity}'`),
+            { encoding: 'utf-8' }
+          ).trim();
+        } catch {
+          clientOutput = '';
+        }
+
         const clientRows = clientOutput
           ? clientOutput
               .split('\n')
               .filter(Boolean)
               .map((row) => {
-                const [, activity] = row.split('\t');
+                const [, activity] = row.split('__WORKOS__');
                 return Number.parseInt(activity || '0', 10) || 0;
               })
           : [];
@@ -217,33 +213,24 @@ export async function POST(request: Request) {
       ? `${String(command)} ${shellEscape(runtimeInstruction.instructionPath)}`
       : String(command);
 
-    execFileSync(
-      'tmux',
-      getTmuxArgs(['new-session', '-d', '-s', sessionName, '-c', cwd, finalCommand]),
+    execSync(
+      getTmuxCmd(`new-session -d -s ${shellEscape(sessionName)} -c ${shellEscape(cwd)} ${finalCommand}`),
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
-    execFileSync('tmux', getTmuxArgs(['set-option', '-t', sessionName, '@workos_command', String(command)]), {
+    execSync(getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_command ${shellEscape(String(command))}`), {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    execFileSync('tmux', getTmuxArgs(['set-option', '-t', sessionName, '@workos_directory', String(cwd)]), {
+    execSync(getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_directory ${shellEscape(String(cwd))}`), {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    execFileSync(
-      'tmux',
-      getTmuxArgs(['set-option', '-t', sessionName, '@workos_role', templateName ? String(templateName) : '']),
+    execSync(
+      getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_role ${shellEscape(templateName ? String(templateName) : '')}`),
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
-    execFileSync(
-      'tmux',
-      getTmuxArgs([
-        'set-option',
-        '-t',
-        sessionName,
-        '@workos_instruction_path',
-        runtimeInstruction ? runtimeInstruction.instructionPath : '',
-      ]),
+    execSync(
+      getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_instruction_path ${shellEscape(runtimeInstruction ? runtimeInstruction.instructionPath : '')}`),
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       }
