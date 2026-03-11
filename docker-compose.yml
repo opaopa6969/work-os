@@ -6,6 +6,7 @@ services:
       - "3000:3000"
     restart: always
     volumes:
+      - /usr/local/bin/tmux:/usr/local/bin/tmux:ro
       - /tmp/tmux-1000:/tmp/tmux-1000
       - /mnt/c/var:/mnt/c/var
     environment:

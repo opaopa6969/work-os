@@ -38,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.9',
+    title: 'Work OS v0.8.10',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -103,7 +103,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.9',
+    title: 'Work OS v0.8.10',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',

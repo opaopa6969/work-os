@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+coverage
+tmp
+*.log
+.git
+.gitignore
+docs
+chats
+tsconfig.tsbuildinfo
