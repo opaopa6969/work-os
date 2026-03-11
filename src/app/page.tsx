@@ -38,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.8',
+    title: 'Work OS v0.8.9',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -103,7 +103,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.8',
+    title: 'Work OS v0.8.9',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -210,6 +210,8 @@ export default function Home() {
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
+  const launcherRef = useRef<HTMLElement | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
 
   const getTerminalHeight = (id: string) => terminalHeightMap[id] || 450;
   const isShellSession = (sessionId: string) => sessionId.startsWith('sh-');
@@ -281,6 +283,17 @@ export default function Home() {
     } catch (error) {
       console.error('Failed to copy path', error);
     }
+  };
+  const useSessionCwd = (value?: string) => {
+    if (!value) {
+      return;
+    }
+    setNewSession((prev) => ({ ...prev, cwd: value }));
+    launcherRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => {
+      directoryInputRef.current?.focus();
+      directoryInputRef.current?.select();
+    }, 180);
   };
 
   const fetchSessions = async () => {
@@ -604,12 +617,12 @@ export default function Home() {
         </div>
       </section>
 
-      <section style={{ marginBottom: '2rem', background: 'var(--card-bg)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
+      <section ref={launcherRef} style={{ marginBottom: '2rem', background: 'var(--card-bg)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
         <h2 style={{ fontSize: '1rem', marginBottom: '1rem', color: 'var(--text-dim)' }}>{t.launchAgent}</h2>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <input type="text" placeholder={t.sessionName} value={newSession.name} onChange={(e) => setNewSession({ ...newSession, name: e.target.value })} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.5rem', borderRadius: '4px', flex: 1, minWidth: '150px' }} />
           <input type="text" placeholder={t.command} value={newSession.command} onChange={(e) => setNewSession({ ...newSession, command: e.target.value })} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.5rem', borderRadius: '4px', flex: 2, minWidth: '200px' }} />
-          <input type="text" placeholder={t.directory} value={newSession.cwd} onChange={(e) => setNewSession({ ...newSession, cwd: e.target.value })} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.5rem', borderRadius: '4px', flex: 2, minWidth: '200px' }} />
+          <input ref={directoryInputRef} type="text" placeholder={t.directory} value={newSession.cwd} onChange={(e) => setNewSession({ ...newSession, cwd: e.target.value })} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.5rem', borderRadius: '4px', flex: 2, minWidth: '200px' }} />
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <select value={newSession.templateName} onChange={(e) => setNewSession({ ...newSession, templateName: e.target.value })} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.5rem', borderRadius: '4px', flex: 1 }}>
@@ -724,7 +737,7 @@ export default function Home() {
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
                     <button onClick={() => openClientsDialog(session.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === session.id ? '...' : t.clients}</button>
                     <button
-                      onClick={() => setNewSession((prev) => ({ ...prev, cwd: session.currentPath || session.directory || prev.cwd }))}
+                      onClick={() => useSessionCwd(session.currentPath || session.directory)}
                       style={{ background: 'transparent', color: '#c7e87b', border: '1px solid #31461f', fontSize: '0.7rem' }}
                     >
                       {t.useCwd}
@@ -805,7 +818,7 @@ export default function Home() {
                       height={getTerminalHeight(shell.id)}
                     />
                   </div>
-                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => openClientsDialog(shell.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === shell.id ? '...' : t.clients}</button><button onClick={() => setNewSession((prev) => ({ ...prev, cwd: shell.currentPath || shell.directory || prev.cwd }))} style={{ background: 'transparent', color: '#c7e87b', border: '1px solid #31461f', fontSize: '0.7rem' }}>{t.useCwd}</button><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
+                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => openClientsDialog(shell.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === shell.id ? '...' : t.clients}</button><button onClick={() => useSessionCwd(shell.currentPath || shell.directory)} style={{ background: 'transparent', color: '#c7e87b', border: '1px solid #31461f', fontSize: '0.7rem' }}>{t.useCwd}</button><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
                 </div>
               ))}
             </div>
