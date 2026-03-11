@@ -14,9 +14,12 @@ export async function POST(
       return NextResponse.json({ error: 'Key is required' }, { status: 400 });
     }
 
+    const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
+    const getTmuxArgs = (args: string[]) => TMUX_SOCKET ? ['-S', TMUX_SOCKET, ...args] : args;
+
     // spawnSync を使い、シェルを介さずに引数を直接渡す
     // 特殊キー（Enter, Up, Down）はそのまま、それ以外もリテラルとして渡す
-    const args = ['-S', '/tmp/tmux-1000/default', 'send-keys', '-t', id, key];
+    const args = getTmuxArgs(['send-keys', '-t', id, key]);
     
     const result = spawnSync('tmux', args, { encoding: 'utf-8' });
 

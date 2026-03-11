@@ -1,6 +1,6 @@
 {
   "name": "work-os",
-  "version": "0.1.0",
+  "version": "0.1.16",
   "private": true,
   "scripts": {
     "dev": "ts-node --project tsconfig.server.json src/server.ts",
@@ -8,10 +8,10 @@
     "start": "NODE_ENV=production node dist/server.js",
     "lint": "next lint"
   },
-
   "dependencies": {
     "ansi-to-html": "^0.7.2",
     "express": "^5.2.1",
+    "fs-extra": "^11.3.4",
     "next": "16.1.6",
     "node-pty": "^1.1.0",
     "react": "19.2.3",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/fs-extra": "^11.0.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -2,8 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "CommonJS",
+    "moduleResolution": "node",
     "outDir": "dist",
     "noEmit": false
   },
-  "include": ["src/server.ts"]
+  "include": ["src/server.ts", "src/server-minimal.ts"]
 }

@@ -1,26 +1,29 @@
-# Work OS Specs (v0.2.0)
+# Work OS Specs
 
-## 1. 目的
-複数の Coding Agent を一括管理し、意思決定のボトルネックを解消する「司令塔」として機能させる。
+## 現状の仕様 (v0.7.4)
 
-## 2. アーキテクチャ (v0.2.0)
-- **Monitoring (Docker):** Next.js + WebSocket (Socket.io).
-- **Execution (Host/WSL):** `tmux` 上の AI Agent 群。
-- **Bridge:** Unix Socket マウント + **Pseudo-terminal (PTY) Bridge**.
+### 1. ターミナル表示 (ポーリング方式)
+- 250ms間隔で `tmux capture-pane` を実行し、画面データを WebSocket (Socket.io) で送信。
+- `xterm.js` を使用して描画。
+- **スマート・スクロール:** 
+  - APP MODE (Vim等): マウスホイールを PageUp/PageDown キーに変換して送信。
+  - SHELL MODE: スクロール中はポーリング描画を一時停止 (1.5秒) して履歴閲覧を維持。
+- **カーソル同期:** `tmux display-message` から得た座標を画面データ末尾にエスケープシーケンスとして付与。
 
-## 3. インテリジェンス機能
-- **Input Detection (Enhanced):** ターミナル出力を解析し、y/n 形式だけでなく、番号選択肢形式 (1. Allow once等) の入力待ちも判定。
-- **Auto-Yes:** 特定のプロンプトを検知した際、自動で 'y' を返答。
+### 2. 制限事項と課題 (ポーリング方式の限界)
+- **カーソル消失:** ポーリングのタイミングによりカーソルが点滅したり消えたりする。
+- **サイズ同期:** `resize-pane` 命令が描画と完全に同期しておらず、不整合が起きやすい。
+- **入力遅延:** 250msのポーリング間隔による体感上のラグ。
+- **Blank画面:** セッションのサイズ乖離や大量の改行コードによる描画のズレ。
 
-## 4. コア機能
-- **Commander View:** 全セッションの一括監視。
-- **Interactive Shell (v0.2.0):** 
-    - `xterm.js` によるリアルタイム・インタラクティブ・ターミナル。
-    - 起動元セッションの直下に表示。
-    - シェル専用の簡素化された UI。
-- **i18n Help:** 日英対応。
+## 次期仕様案 (v0.8.0以降 - PTYストリーミング方式)
 
-## 5. 技術スタック
-- **Frontend:** React + xterm.js + Socket.io-client
-- **Backend:** Next.js + Socket.io + node-pty
-- **Infrastructure:** Cloudflare Tunnel
+### 1. 通信プロトコルの刷新
+- **node-pty + WebSocket:** サーバー側で PTY (Pseudo Terminal) を生成し、`tmux attach` をストリーミング。
+- **xterm-addon-attach:** 標準的な Web ターミナルの仕組みに移行。
+
+### 2. 期待される効果
+- カーソルの完全な再現 (OS/tmuxネイティブ)。
+- リアルタイムな入力レスポンス。
+- ウィンドウリサイズの完全な同期。
+- スクロール挙動の自然な動作 (Vim/Less等を含む)。
