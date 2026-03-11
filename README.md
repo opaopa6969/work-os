@@ -5,6 +5,10 @@
 
 Work OS is a browser-based tmux operations console for running and supervising local agent sessions. It is designed for a host machine where `tmux`, `codex`, `claude`, `gemini`, shells, and project directories already exist, and exposes those sessions through a web UI.
 
+### Interface Snapshot
+
+![Work OS dashboard screenshot](docs/media/work-os-dashboard-2026-03-11.png)
+
 ### What It Does
 
 - Monitors multiple tmux sessions from one dashboard
@@ -38,7 +42,9 @@ Open `http://127.0.0.1:3000`.
 The Docker container mounts:
 
 - `/usr/local/bin/tmux:/usr/local/bin/tmux:ro`
-
+- `/mnt/c/var/work/work-os/src:/app/src`
+- `/mnt/c/var/work/work-os/public:/app/public`
+- `/mnt/c/var/work/work-os/templates:/app/templates`
 - `/tmp/tmux-1000:/tmp/tmux-1000`
 - `/mnt/c/var:/mnt/c/var`
 
@@ -84,6 +90,8 @@ Session flow:
 ### Notes
 
 - Docker access depends on the host tmux socket path matching `TMUX_SOCKET=/tmp/tmux-1000/default`
+- Docker also mounts the host tmux binary so the tmux protocol version matches the host
+- The Docker app bind-mounts `src`, `public`, and `templates` so the running container sees the latest UI and API code without sharing the host `.next` lock
 - If a session is already attached in a native terminal and the web view is unstable, use `mirror`
 - If you want the browser size to affect the tmux client, use `resize-client`
 
@@ -92,6 +100,10 @@ Session flow:
 ## Work OS 日本語
 
 Work OS は、ローカルホスト上の tmux セッションをブラウザから監視・操作するための Web コンソールです。`tmux`, `codex`, `claude`, `gemini`, 各種 shell、既存の開発ディレクトリがホストに存在している前提で、それらを Web UI に束ねます。
+
+### 画面例
+
+![Work OS ダッシュボード画面](docs/media/work-os-dashboard-2026-03-11.png)
 
 ### できること
 
@@ -126,7 +138,9 @@ docker compose up -d --build
 Docker コンテナは以下を mount します。
 
 - `/usr/local/bin/tmux:/usr/local/bin/tmux:ro`
-
+- `/mnt/c/var/work/work-os/src:/app/src`
+- `/mnt/c/var/work/work-os/public:/app/public`
+- `/mnt/c/var/work/work-os/templates:/app/templates`
 - `/tmp/tmux-1000:/tmp/tmux-1000`
 - `/mnt/c/var:/mnt/c/var`
 
@@ -173,5 +187,7 @@ Work OS はホスト tmux server を前提に動きます。
 ### 注意点
 
 - Docker 利用時は `TMUX_SOCKET=/tmp/tmux-1000/default` とホスト側 socket の実体が一致している必要があります
+- Docker 側では host と同じ tmux binary を mount して、tmux protocol/version mismatch を避けています
+- Docker app は `src`, `public`, `templates` を bind mount して最新コードを見ますが、`.next` は共有しないため local dev と lock 競合しません
 - ネイティブ terminal 側ですでに attach されている session が不安定なら `mirror` を使ってください
 - ブラウザ側のサイズを tmux client に反映したい場合は `resize-client` を使ってください
