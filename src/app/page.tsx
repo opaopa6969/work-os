@@ -38,7 +38,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.7',
+    title: 'Work OS v0.8.8',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -82,6 +82,11 @@ const translations = {
     clients: 'Clients',
     refresh: 'Refresh',
     live: 'Live',
+    sort: 'Sort',
+    byActivity: 'Activity',
+    byCreated: 'Created',
+    byName: 'Name',
+    useCwd: 'Use CWD',
     close: '閉じる',
     noClients: '接続中 client はありません',
     readOnlyMirror: 'read-only',
@@ -98,7 +103,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.7',
+    title: 'Work OS v0.8.8',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -142,6 +147,11 @@ const translations = {
     clients: 'Clients',
     refresh: 'Refresh',
     live: 'Live',
+    sort: 'Sort',
+    byActivity: 'Activity',
+    byCreated: 'Created',
+    byName: 'Name',
+    useCwd: 'Use CWD',
     close: 'Close',
     noClients: 'No attached clients',
     readOnlyMirror: 'read-only',
@@ -196,6 +206,7 @@ export default function Home() {
   const [clientsLoading, setClientsLoading] = useState<string | null>(null);
   const [clientActionKey, setClientActionKey] = useState<string | null>(null);
   const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
+  const [clientSort, setClientSort] = useState<'activity' | 'created' | 'name'>('activity');
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
@@ -252,6 +263,10 @@ export default function Home() {
       ...prev,
       [id]: Math.max(320, Math.min(960, (prev[id] || 450) + delta)),
     }));
+  };
+  const getSortScore = (session: Session) => {
+    const waitingBoost = session.isWaitingForInput ? 10 ** 12 : 0;
+    return waitingBoost + (session.lastActivity || 0);
   };
   const copyPath = async (sessionId: string, value?: string) => {
     if (!value) {
@@ -504,6 +519,34 @@ export default function Home() {
     return () => window.clearInterval(interval);
   }, [clientsDialog?.sessionId]);
 
+  const topLevelSessions = [...sessions.filter((s) => !s.name.startsWith('sh-'))].sort((a, b) => {
+    const scoreDiff = getSortScore(b) - getSortScore(a);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  const commanderSessions = [...sessions].sort((a, b) => {
+    const scoreDiff = getSortScore(b) - getSortScore(a);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  const sortedClients = clientsDialog
+    ? [...clientsDialog.clients].sort((a, b) => {
+        if (clientSort === 'activity') {
+          return (b.activity || 0) - (a.activity || 0);
+        }
+        if (clientSort === 'created') {
+          return (b.created || 0) - (a.created || 0);
+        }
+        return (a.name || a.tty).localeCompare(b.name || b.tty);
+      })
+    : [];
+
   return (
     <main>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -543,7 +586,7 @@ export default function Home() {
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {sessions.map(s => (
+          {commanderSessions.map(s => (
             <div key={s.id} id={`row-${s.id}`} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.5rem', background: s.isWaitingForInput ? '#2a2a00' : 'transparent', borderBottom: '1px solid #222' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.85rem' }}>
                 <a href={`#card-${s.id}`} style={{ color: s.isWaitingForInput ? '#ffeb3b' : '#fff', fontWeight: 'bold', width: '120px', textDecoration: 'none' }}>{s.isWaitingForInput ? '⚡ ' : ''}{s.name}</a>
@@ -594,8 +637,10 @@ export default function Home() {
       </section>
 
       <div className="session-grid">
-        {sessions.filter(s => !s.name.startsWith('sh-')).map((session) => {
-          const childShells = sessions.filter(s => s.name.startsWith(`sh-${session.name}-`));
+        {topLevelSessions.map((session) => {
+          const childShells = sessions
+            .filter(s => s.name.startsWith(`sh-${session.name}-`))
+            .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0) || a.name.localeCompare(b.name));
           const lastInteraction = userInteractedAt[session.id] || 0;
           const isInterrupted = (Date.now() - lastInteraction) < 30000;
           const sessionActivityTone = getActivityTone(session.lastActivity);
@@ -678,6 +723,12 @@ export default function Home() {
                 <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
                     <button onClick={() => openClientsDialog(session.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === session.id ? '...' : t.clients}</button>
+                    <button
+                      onClick={() => setNewSession((prev) => ({ ...prev, cwd: session.currentPath || session.directory || prev.cwd }))}
+                      style={{ background: 'transparent', color: '#c7e87b', border: '1px solid #31461f', fontSize: '0.7rem' }}
+                    >
+                      {t.useCwd}
+                    </button>
                     <button onClick={() => window.open(`/api/sessions/${session.id}`, '_blank')} style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px solid #333', fontSize: '0.7rem' }}>Raw</button>
                     <button onClick={() => enterShell(session.id)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>🐚 Shell</button>
                     <button onClick={() => killSession(session.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill</button>
@@ -754,7 +805,7 @@ export default function Home() {
                       height={getTerminalHeight(shell.id)}
                     />
                   </div>
-                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => openClientsDialog(shell.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === shell.id ? '...' : t.clients}</button><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
+                  <div className="session-footer" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}><div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}><button onClick={() => openClientsDialog(shell.id)} style={{ background: 'transparent', color: '#9ecbff', border: '1px solid #23374c', fontSize: '0.7rem' }}>{clientsLoading === shell.id ? '...' : t.clients}</button><button onClick={() => setNewSession((prev) => ({ ...prev, cwd: shell.currentPath || shell.directory || prev.cwd }))} style={{ background: 'transparent', color: '#c7e87b', border: '1px solid #31461f', fontSize: '0.7rem' }}>{t.useCwd}</button><button onClick={() => killSession(shell.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill Shell</button><a href={`#row-${shell.id}`} style={{ fontSize: '0.7rem', color: 'var(--accent)', textDecoration: 'none' }}>{t.backToDash}</a></div></div>
                 </div>
               ))}
             </div>
@@ -795,6 +846,15 @@ export default function Home() {
                 <div style={{ color: '#fff', fontWeight: 700 }}>{clientsDialog.sessionId}</div>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select
+                  value={clientSort}
+                  onChange={(event) => setClientSort(event.target.value as 'activity' | 'created' | 'name')}
+                  style={{ background: '#08111f', color: '#d7e3f4', border: '1px solid #23374c', fontSize: '0.72rem', padding: '0.18rem 0.32rem', borderRadius: '4px' }}
+                >
+                  <option value="activity">{t.sort}: {t.byActivity}</option>
+                  <option value="created">{t.sort}: {t.byCreated}</option>
+                  <option value="name">{t.sort}: {t.byName}</option>
+                </select>
                 <span
                   style={{
                     color: '#4ade80',
@@ -850,7 +910,7 @@ export default function Home() {
               <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>{t.noClients}</div>
             ) : (
               <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
-                {clientsDialog.clients.map((client) => {
+                {sortedClients.map((client) => {
                   const detachKey = `${clientsDialog.sessionId}:${client.tty}:detach`;
                   const killKey = `${clientsDialog.sessionId}:${client.tty}:kill`;
                   return (
