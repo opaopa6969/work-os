@@ -1,19 +1,18 @@
 import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
+import { resolveTmuxProvider } from '@/lib/tmux-provider';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+  const tmux = resolveTmuxProvider();
 
   try {
-    const output = execSync(
-      getTmuxCmd(`list-clients -t "${id}" -F "#{client_name}\t#{client_pid}\t#{client_tty}\t#{client_width}x#{client_height}\t#{client_created}\t#{client_activity}\t#{client_termname}"`),
-      { encoding: 'utf-8' }
-    ).trim();
+    const output = tmux.exec([
+      'list-clients', '-t', id,
+      '-F', '#{client_name}\t#{client_pid}\t#{client_tty}\t#{client_width}x#{client_height}\t#{client_created}\t#{client_activity}\t#{client_termname}',
+    ]);
 
     const clients = output
       ? output.split('\n').map((line) => {
@@ -49,20 +48,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+  const tmux = resolveTmuxProvider();
 
   try {
     const { action, tty, pid } = await request.json();
 
     if (action === 'detach-all') {
-      const output = execSync(
-        getTmuxCmd(`list-clients -t "${id}" -F "#{client_tty}"`),
-        { encoding: 'utf-8' }
-      ).trim();
+      const output = tmux.exec(['list-clients', '-t', id, '-F', '#{client_tty}']);
       const ttys = output ? output.split('\n').filter(Boolean) : [];
       for (const currentTty of ttys) {
-        execSync(getTmuxCmd(`detach-client -t "${currentTty}"`), { encoding: 'utf-8' });
+        tmux.exec(['detach-client', '-t', currentTty]);
       }
       return NextResponse.json({ ok: true, action, sessionId: id, detached: ttys });
     }
@@ -71,7 +66,7 @@ export async function POST(
       if (!tty) {
         return NextResponse.json({ error: 'tty is required' }, { status: 400 });
       }
-      execSync(getTmuxCmd(`detach-client -t "${tty}"`), { encoding: 'utf-8' });
+      tmux.exec(['detach-client', '-t', tty]);
       return NextResponse.json({ ok: true, action, tty, sessionId: id });
     }
 

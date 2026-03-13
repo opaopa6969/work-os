@@ -1,17 +1,11 @@
 import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
 import fs from 'fs-extra';
 import path from 'path';
+import { resolveTmuxProvider } from '@/lib/tmux-provider';
 
 const USER_TEMPLATES_DIR = path.join(process.cwd(), 'templates/user');
 const DEFAULT_TEMPLATES_DIR = path.join(process.cwd(), 'templates/defaults');
 const RUNTIME_SESSIONS_DIR = process.env.WORK_OS_RUNTIME_DIR || '/tmp/workos-runtime/sessions';
-
-const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-
-function getTmuxCmd(cmd: string) {
-  return TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
-}
 
 function sanitizeSessionName(input: string) {
   return input.trim().replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 120);
@@ -39,9 +33,6 @@ function resolveTemplateDir(templateName?: string) {
   return null;
 }
 
-function shellEscape(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
 
 async function buildRuntimeInstruction(
   templateDir: string,
@@ -106,11 +97,13 @@ ${templateInstruction.trim() || 'この role には追加テンプレート本�
 }
 
 export async function GET() {
+  const tmux = resolveTmuxProvider();
   try {
-    const output = execSync(
-      getTmuxCmd(`ls -F '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}'`),
-      { encoding: 'utf-8' }
-    );
+    const output = tmux.exec([
+      'ls',
+      '-F',
+      '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}',
+    ]);
 
     const sessions = output
       .trim()
@@ -118,21 +111,18 @@ export async function GET() {
       .filter(Boolean)
       .map((line) => {
         const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
-        const currentCommand = execSync(
-          getTmuxCmd(`display-message -p -t ${shellEscape(name)} '#{pane_current_command}'`),
-          { encoding: 'utf-8' }
-        ).trim();
-        const currentPath = execSync(
-          getTmuxCmd(`display-message -p -t ${shellEscape(name)} '#{pane_current_path}'`),
-          { encoding: 'utf-8' }
-        ).trim();
+        const currentCommand = tmux.exec(['display-message', '-p', '-t', name, '#{pane_current_command}']);
+        const currentPath = tmux.exec(['display-message', '-p', '-t', name, '#{pane_current_path}']);
 
         let clientOutput = '';
         try {
-          clientOutput = execSync(
-            getTmuxCmd(`list-clients -t ${shellEscape(name)} -F '#{client_tty}__WORKOS__#{client_activity}'`),
-            { encoding: 'utf-8' }
-          ).trim();
+          clientOutput = tmux.exec([
+            'list-clients',
+            '-t',
+            name,
+            '-F',
+            '#{client_tty}__WORKOS__#{client_activity}',
+          ]);
         } catch {
           clientOutput = '';
         }
@@ -188,6 +178,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const tmux = resolveTmuxProvider();
   try {
     const { name, command, cwd, templateName } = await request.json();
 
@@ -209,39 +200,26 @@ export async function POST(request: Request) {
     const runtimeInstruction = templateDir
       ? await buildRuntimeInstruction(templateDir, sessionName, cwd, String(command), String(templateName))
       : null;
-    const finalCommand = runtimeInstruction
-      ? `${String(command)} ${shellEscape(runtimeInstruction.instructionPath)}`
-      : String(command);
 
-    execSync(
-      getTmuxCmd(`new-session -d -s ${shellEscape(sessionName)} -c ${shellEscape(cwd)} ${finalCommand}`),
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-    execSync(getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_command ${shellEscape(String(command))}`), {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    execSync(getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_directory ${shellEscape(String(cwd))}`), {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    execSync(
-      getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_role ${shellEscape(templateName ? String(templateName) : '')}`),
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
-    execSync(
-      getTmuxCmd(`set-option -t ${shellEscape(sessionName)} @workos_instruction_path ${shellEscape(runtimeInstruction ? runtimeInstruction.instructionPath : '')}`),
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
+    // Build new-session args: command args are split by whitespace since tmux expects them as separate tokens
+    const cmdTokens = runtimeInstruction
+      ? [String(command), runtimeInstruction.instructionPath]
+      : String(command).split(/\s+/);
+    tmux.exec(['new-session', '-d', '-s', sessionName, '-c', String(cwd), ...cmdTokens]);
+
+    const finalCommand = cmdTokens.join(' ');
+
+    tmux.exec(['set-option', '-t', sessionName, '@workos_command', String(command)]);
+    tmux.exec(['set-option', '-t', sessionName, '@workos_directory', String(cwd)]);
+    tmux.exec(['set-option', '-t', sessionName, '@workos_role', templateName ? String(templateName) : '']);
+    tmux.exec(['set-option', '-t', sessionName, '@workos_instruction_path', runtimeInstruction ? runtimeInstruction.instructionPath : '']);
 
     return NextResponse.json({
       message: `Session ${sessionName} started`,
       sessionName,
       cwd,
       command: finalCommand,
-      instructionPath: runtimeInstruction?.instructionPath || null,
+      instructionPath: runtimeInstruction?.instructionPath ?? null,
     });
   } catch (error: any) {
     return NextResponse.json(

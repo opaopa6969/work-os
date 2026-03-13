@@ -1,21 +1,19 @@
 import { NextResponse } from 'next/server';
-import { execSync } from 'child_process';
+import { resolveTmuxProvider } from '@/lib/tmux-provider';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-
-  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+  const tmux = resolveTmuxProvider();
 
   try {
     let output = '';
     try {
-      output = execSync(getTmuxCmd(`capture-pane -a -e -J -p -t "${id}"`), { encoding: 'utf-8' });
+      output = tmux.exec(['capture-pane', '-a', '-e', '-J', '-p', '-t', id]);
     } catch {
-      output = execSync(getTmuxCmd(`capture-pane -e -J -p -t "${id}"`), { encoding: 'utf-8' });
+      output = tmux.exec(['capture-pane', '-e', '-J', '-p', '-t', id]);
     }
 
     const lines = output.trim().split('\n');
@@ -42,10 +40,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-  const getTmuxCmd = (cmd: string) => TMUX_SOCKET ? `tmux -S ${TMUX_SOCKET} ${cmd}` : `tmux ${cmd}`;
+  const tmux = resolveTmuxProvider();
   try {
-    execSync(getTmuxCmd(`kill-session -t "${id}"`));
+    tmux.exec(['kill-session', '-t', id]);
     return NextResponse.json({ message: `Session ${id} killed` });
   } catch (error: any) {
     return NextResponse.json({ error: `Failed to kill tmux session: ${id}`, details: error.message }, { status: 500 });

@@ -3,7 +3,8 @@ import { createServer } from 'http';
 import next from 'next';
 import { Server } from 'socket.io';
 import * as pty from 'node-pty';
-import { execFileSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import { resolveTmuxProvider } from './lib/tmux-provider';
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
@@ -17,8 +18,9 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Server] Unhandled Rejection:', reason);
 });
 
-const TMUX_SOCKET = process.env.TMUX_SOCKET || '';
-const getTmuxArgs = (args: string[]) => (TMUX_SOCKET ? ['-S', TMUX_SOCKET, ...args] : args);
+const tmuxProvider = resolveTmuxProvider();
+const getTmuxArgs = (args: string[]) =>
+  tmuxProvider.socketPath ? ['-S', tmuxProvider.socketPath, ...args] : args;
 
 type SessionMode = 'pty' | 'mirror';
 type SessionModePreference = 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client';
@@ -71,7 +73,7 @@ function sanitizeSessionId(input: unknown) {
 }
 
 function tmuxOutput(args: string[]) {
-  return execFileSync('tmux', getTmuxArgs(args), { encoding: 'utf-8' }).trim();
+  return tmuxProvider.exec(args);
 }
 
 function getSessionInfo(sessionId: string, preferredMode: SessionModePreference = 'auto'): SessionInfo {
