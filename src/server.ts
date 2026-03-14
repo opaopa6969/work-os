@@ -1,10 +1,11 @@
 import express from 'express';
 import { createServer } from 'http';
 import next from 'next';
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import * as pty from 'node-pty';
 import { spawnSync, spawn } from 'child_process';
-import { buildSessionPool, type TmuxProvider } from './lib/tmux-provider';
+import { io as ioClient } from 'socket.io-client';
+import { buildSessionPool, type TmuxProvider, HttpRemoteProvider } from './lib/tmux-provider';
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
@@ -58,7 +59,19 @@ type MirrorBridge = {
   readOnly: boolean;
 };
 
-type Bridge = PtyBridge | MirrorBridge;
+type RemoteWebSocketBridge = {
+  sessionId: string;
+  mode: 'remote-websocket';
+  sockets: Set<string>;
+  createdAt: number;
+  lastActiveAt: number;
+  remoteSocket: any; // Socket.IO socket
+  info: SessionInfo;
+  resizeStrategy: 'pty-only' | 'tmux-window';
+  readOnly: boolean;
+};
+
+type Bridge = PtyBridge | MirrorBridge | RemoteWebSocketBridge;
 
 const bridges = new Map<string, Bridge>();
 const socketToSession = new Map<string, string>();
@@ -298,9 +311,14 @@ function destroyBridge(sessionId: string) {
 
   if (existing.mode === 'mirror') {
     clearInterval(existing.pollTimer);
-  } else {
+  } else if (existing.mode === 'pty') {
     try {
       existing.ptyProcess.kill();
+    } catch {
+    }
+  } else if (existing.mode === 'remote-websocket') {
+    try {
+      existing.remoteSocket.disconnect();
     } catch {
     }
   }
@@ -359,6 +377,52 @@ function ensureMirrorBridge(io: Server, provider: TmuxProvider, info: SessionInf
   return bridge;
 }
 
+/**
+ * Create a remote WebSocket bridge that proxies to an HTTP agent
+ */
+function ensureRemoteWebSocketBridge(
+  io: Server,
+  provider: HttpRemoteProvider,
+  info: SessionInfo
+) {
+  const compositeId = `${provider.hostId}:${info.sessionId}`;
+  const existing = bridges.get(compositeId);
+  if (existing && existing.mode === 'remote-websocket') {
+    existing.lastActiveAt = Date.now();
+    existing.info = info;
+    return existing;
+  }
+
+  // Create a remote socket connection to the agent
+  const remoteSocket = ioClient(`${provider.agentUrl}`, {
+    path: '/socket.io',
+  });
+
+  remoteSocket.on('connect', () => {
+    // Send start command to remote agent
+    remoteSocket.emit('start', {
+      sessionId: info.sessionId,
+      cols: 120,
+      rows: 32,
+    });
+  });
+
+  const bridge: RemoteWebSocketBridge = {
+    sessionId: compositeId,
+    mode: 'remote-websocket',
+    sockets: new Set(),
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+    remoteSocket,
+    info,
+    resizeStrategy: info.resizeStrategy,
+    readOnly: info.readOnly,
+  };
+
+  bridges.set(compositeId, bridge);
+  return bridge;
+}
+
 function detachSocket(socketId: string) {
   const sessionId = socketToSession.get(socketId);
   if (!sessionId) {
@@ -369,9 +433,14 @@ function detachSocket(socketId: string) {
   if (bridge) {
     bridge.sockets.delete(socketId);
     bridge.lastActiveAt = Date.now();
-    if (bridge.sockets.size === 0 && bridge.mode === 'mirror') {
-      clearInterval(bridge.pollTimer);
-      bridges.delete(sessionId);
+    if (bridge.sockets.size === 0) {
+      if (bridge.mode === 'mirror') {
+        clearInterval(bridge.pollTimer);
+        bridges.delete(sessionId);
+      } else if (bridge.mode === 'remote-websocket') {
+        bridge.remoteSocket.disconnect();
+        bridges.delete(sessionId);
+      }
     }
   }
 
@@ -418,6 +487,56 @@ app
 
         try {
           const { provider, sessionName } = sessionPool.resolve(compositeId);
+
+          // For HTTP providers, use remote WebSocket bridge
+          if (provider instanceof HttpRemoteProvider) {
+            const bridgeKey = `${provider.hostId}:${sessionName}`;
+            const existing = bridges.get(bridgeKey);
+            if (existing && existing.mode !== 'remote-websocket') {
+              destroyBridge(bridgeKey);
+            }
+
+            // Create basic session info for remote bridge
+            const info: SessionInfo = {
+              sessionId: sessionName,
+              attachedCount: 0,
+              currentCommand: '',
+              currentPath: '',
+              mode: 'pty',
+              reason: 'remote-websocket',
+              resizeStrategy: 'pty-only',
+              readOnly: false,
+            };
+
+            const bridge = ensureRemoteWebSocketBridge(io, provider, info);
+            bridge.sockets.add(socket.id);
+            bridge.lastActiveAt = Date.now();
+            socketToSession.set(socket.id, bridgeKey);
+
+            // Proxy events from remote to client
+            bridge.remoteSocket.on('output', (data: any) => {
+              socket.emit('output', data);
+            });
+            bridge.remoteSocket.on('session-exit', (payload: any) => {
+              socket.emit('session-exit', payload);
+              destroyBridge(bridgeKey);
+            });
+            bridge.remoteSocket.on('terminal:error', (payload: any) => {
+              socket.emit('terminal:error', payload);
+            });
+            bridge.remoteSocket.on('terminal:status', (payload: any) => {
+              socket.emit('terminal:status', payload);
+            });
+
+            socket.emit('terminal:status', {
+              state: 'ready',
+              sessionId: bridgeKey,
+              message: 'REMOTE: connected to HTTP agent',
+              readOnly: false,
+            });
+            return;
+          }
+
           const info = getSessionInfo(provider, sessionName, preferredMode);
           const bridgeKey = `${provider.hostId}:${info.sessionId}`;
           const existing = bridges.get(bridgeKey);
@@ -476,6 +595,10 @@ app
           bridge.ptyProcess.write(data);
           return;
         }
+        if (bridge.mode === 'remote-websocket') {
+          bridge.remoteSocket.emit('command', { data });
+          return;
+        }
         // For mirror mode, we need to resolve the provider again
         const [hostId, sessionName] = compositeId.split(':');
         const provider = sessionPool.getProvider(hostId);
@@ -501,14 +624,13 @@ app
         }
         bridge.lastActiveAt = Date.now();
 
-        // Resolve provider for tmux commands
-        const [hostId, sessionName] = compositeId.split(':');
-        const provider = sessionPool.getProvider(hostId);
-        if (!provider) {
-          return;
-        }
-
         if (bridge.mode === 'pty') {
+          // Resolve provider for tmux commands
+          const [hostId, sessionName] = compositeId.split(':');
+          const provider = sessionPool.getProvider(hostId);
+          if (!provider) {
+            return;
+          }
           try {
             bridge.ptyProcess.resize(cols, rows);
           } catch {
@@ -516,6 +638,18 @@ app
           if (bridge.resizeStrategy === 'tmux-window') {
             provider.exec(['resize-window', '-t', sessionName, '-x', String(cols), '-y', String(rows)]);
           }
+          return;
+        }
+
+        if (bridge.mode === 'remote-websocket') {
+          bridge.remoteSocket.emit('resize', { cols, rows });
+          return;
+        }
+
+        // Mirror mode
+        const [hostId, sessionName] = compositeId.split(':');
+        const provider = sessionPool.getProvider(hostId);
+        if (!provider) {
           return;
         }
         provider.exec(['resize-window', '-t', sessionName, '-x', String(cols), '-y', String(rows)]);
@@ -532,7 +666,7 @@ app
           acc[bridge.mode] += 1;
           return acc;
         },
-        { pty: 0, mirror: 0 },
+        { pty: 0, mirror: 0, 'remote-websocket': 0 },
       );
       res.json({ ok: true, sessions: bridges.size, ...counts });
     });

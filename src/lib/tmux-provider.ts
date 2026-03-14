@@ -13,6 +13,8 @@ export interface TmuxProvider {
   readonly hostId: string;
   /** Human-readable display name (e.g. "HVU Local", "WSL", "Remote Server"). */
   readonly displayName: string;
+  /** Provider type (used for routing logic) */
+  readonly providerType?: 'local' | 'ssh' | 'http';
 }
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ class DefaultSocketProvider implements TmuxProvider {
   readonly socketPath = undefined;
   readonly hostId = 'local';
   readonly displayName = 'Local';
+  readonly providerType = 'local' as const;
 
   exec(args: string[]): string {
     return execFileSync('tmux', args, { encoding: 'utf-8' }).trim();
@@ -43,6 +46,7 @@ class DefaultSocketProvider implements TmuxProvider {
 class ExplicitSocketProvider implements TmuxProvider {
   readonly hostId = 'local';
   readonly displayName = 'Local';
+  readonly providerType = 'local' as const;
 
   constructor(readonly socketPath: string) {}
 
@@ -73,6 +77,7 @@ class ExplicitSocketProvider implements TmuxProvider {
 class SshTmuxProvider implements TmuxProvider {
   readonly socketPath: string;
   readonly sshTarget: string; // Made public for server.ts access
+  readonly providerType = 'ssh' as const;
 
   constructor(
     readonly hostId: string,
@@ -115,6 +120,118 @@ class SshTmuxProvider implements TmuxProvider {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * HTTP-based tmux provider for remote agents (e.g., WSL agent).
+ * Communicates via HTTP API instead of SSH.
+ */
+export class HttpRemoteProvider implements TmuxProvider {
+  readonly socketPath = undefined;
+  readonly providerType = 'http' as const;
+  readonly agentUrl: string; // Made public for server.ts access
+
+  constructor(
+    readonly hostId: string,
+    readonly displayName: string,
+    agentUrl: string // e.g., "http://172.29.214.157:3001"
+  ) {
+    this.agentUrl = agentUrl;
+  }
+
+  /**
+   * Make HTTP request to the agent using curl (synchronous)
+   */
+  private httpRequest(method: string, path: string, body?: any): string {
+    const url = this.agentUrl + path;
+    const args: string[] = ['-sf'];
+
+    if (method === 'POST') {
+      args.push('-X', 'POST');
+      args.push('-H', 'Content-Type: application/json');
+      if (body) {
+        args.push('-d', JSON.stringify(body));
+      }
+    }
+
+    args.push(url);
+
+    try {
+      const result = execFileSync('curl', args, { encoding: 'utf-8', timeout: 5000 });
+      return result;
+    } catch (error: any) {
+      throw new Error(`HTTP request failed: ${error.message}`);
+    }
+  }
+
+  exec(args: string[]): string {
+    // Map tmux commands to HTTP API calls
+    if (args[0] === 'ls' && args[1] === '-F') {
+      // List sessions
+      const response = this.httpRequest('GET', '/api/sessions');
+      const parsed = JSON.parse(response);
+      return parsed.sessions
+        .map((s: any) => {
+          return [
+            s.name,
+            s.created,
+            s.isAttached ? '1' : '0',
+            s.command || '',
+            s.directory || '',
+            s.role || '',
+            s.instructionPath || '',
+          ].join('__WORKOS__');
+        })
+        .join('\n');
+    }
+
+    if (args[0] === 'display-message' && args[1] === '-p') {
+      // Get session info
+      const sessionName = args[args.indexOf('-t') + 1];
+      const response = this.httpRequest('GET', `/api/sessions/${sessionName}`);
+      const parsed = JSON.parse(response);
+      const format = args[args.length - 1];
+
+      if (format.includes('session_name')) {
+        return `${parsed.name}|${parsed.isAttached ? 1 : 0}|${parsed.currentCommand}|${parsed.currentPath}`;
+      }
+      return '';
+    }
+
+    if (args[0] === 'capture-pane') {
+      // Capture terminal content
+      const sessionName = args[args.indexOf('-t') + 1];
+      const response = this.httpRequest('GET', `/api/sessions/${sessionName}/capture`);
+      const parsed = JSON.parse(response);
+      return parsed.content || '';
+    }
+
+    if (args[0] === 'send-keys') {
+      // Send keys to session
+      const sessionName = args[args.indexOf('-t') + 1];
+      const keyIndex = args.indexOf('-l') !== -1 ? args.indexOf('-l') + 2 : args.length - 1;
+      const key = args[keyIndex];
+
+      if (args.includes('-l')) {
+        this.httpRequest('POST', `/api/sessions/${sessionName}/send-literal`, { text: key });
+      } else {
+        this.httpRequest('POST', `/api/sessions/${sessionName}/send-key`, { key });
+      }
+      return '';
+    }
+
+    // For other commands, we can't map them
+    throw new Error(`HttpRemoteProvider does not support tmux ${args[0]} command`);
+  }
+
+  isAvailable(): boolean {
+    try {
+      this.httpRequest('GET', '/healthz');
       return true;
     } catch {
       return false;
@@ -290,6 +407,10 @@ export function buildSessionPool(): MultiHostSessionPool {
         } else if (config.type === 'ssh') {
           providers.push(
             new SshTmuxProvider(config.hostId, config.displayName, config.sshTarget, config.socketPath)
+          );
+        } else if (config.type === 'http') {
+          providers.push(
+            new HttpRemoteProvider(config.hostId, config.displayName, config.agentUrl)
           );
         }
       }

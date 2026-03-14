@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "ts-node --project tsconfig.server.json src/server.ts",
-    "build": "next build && tsc --project tsconfig.server.json",
+    "dev:agent": "ts-node --project tsconfig.agent.json agent/index.ts",
+    "build": "next build && tsc --project tsconfig.server.json && tsc --project tsconfig.agent.json",
     "start": "NODE_ENV=production node dist/server.js",
+    "start:agent": "NODE_ENV=production node dist/agent.js",
     "lint": "next lint"
   },
   "dependencies": {
@@ -19,7 +21,8 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0"
+    "xterm-addon-fit": "^0.8.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
