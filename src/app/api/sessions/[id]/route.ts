@@ -1,19 +1,20 @@
 import { NextResponse } from 'next/server';
-import { resolveTmuxProvider } from '@/lib/tmux-provider';
+import { buildSessionPool } from '@/lib/tmux-provider';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
 
   try {
+    const { provider, sessionName } = pool.resolve(id);
     let output = '';
     try {
-      output = tmux.exec(['capture-pane', '-a', '-e', '-J', '-p', '-t', id]);
+      output = provider.exec(['capture-pane', '-a', '-e', '-J', '-p', '-t', sessionName]);
     } catch {
-      output = tmux.exec(['capture-pane', '-e', '-J', '-p', '-t', id]);
+      output = provider.exec(['capture-pane', '-e', '-J', '-p', '-t', sessionName]);
     }
 
     const lines = output.trim().split('\n');
@@ -40,9 +41,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
   try {
-    tmux.exec(['kill-session', '-t', id]);
+    const { provider, sessionName } = pool.resolve(id);
+    provider.exec(['kill-session', '-t', sessionName]);
     return NextResponse.json({ message: `Session ${id} killed` });
   } catch (error: any) {
     return NextResponse.json({ error: `Failed to kill tmux session: ${id}`, details: error.message }, { status: 500 });

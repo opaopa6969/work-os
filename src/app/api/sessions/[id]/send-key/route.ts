@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { resolveTmuxProvider } from '@/lib/tmux-provider';
+import { buildSessionPool } from '@/lib/tmux-provider';
 
 export async function POST(
   request: Request,
@@ -14,8 +14,9 @@ export async function POST(
       return NextResponse.json({ error: 'Key is required' }, { status: 400 });
     }
 
-    const tmux = resolveTmuxProvider();
-    tmux.exec(['send-keys', '-t', id, key]);
+    const pool = buildSessionPool();
+    const { provider, sessionName } = pool.resolve(id);
+    provider.exec(['send-keys', '-t', sessionName, key]);
 
     return NextResponse.json({
       message: `Sent key: ${key} to session: ${id}`,

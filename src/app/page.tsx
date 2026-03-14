@@ -17,6 +17,8 @@ const converter = new AnsiToHtml({
 interface Session {
   id: string;
   name: string;
+  hostId?: string;
+  hostName?: string;
   isAttached: boolean;
   lastActivity?: number;
   command?: string;
@@ -300,11 +302,14 @@ export default function Home() {
     try {
       const res = await fetch('/api/sessions');
       const data = await res.json();
+      console.log('[fetchSessions] API response:', { sessionsCount: data.sessions?.length, killedCount: killedSessionIds.size });
       if (data.sessions) {
         const filteredSessions = data.sessions.filter((s: Session) => !killedSessionIds.has(s.id));
+        console.log('[fetchSessions] After filtering:', { filteredCount: filteredSessions.length });
         const updatedSessions = await Promise.all(
           filteredSessions.map(async (s: Session) => {
             if (isShellSession(s.id)) {
+              console.log('[fetchSessions] Shell session:', s.id);
               return {
                 ...s,
                 summary: 'Shell',
@@ -314,6 +319,7 @@ export default function Home() {
             try {
               const capRes = await fetch(`/api/sessions/${s.id}`);
               const capData = await capRes.json();
+              console.log(`[fetchSessions] Fetched ${s.id}: capRes.ok=${capRes.ok}, hasContent=${!!capData.content}`);
               const lastInteraction = userInteractedAt[s.id] || 0;
               const isInterrupted = (Date.now() - lastInteraction) < 30000;
               if (!isInterrupted && autoYesMap[s.id] && capData.isWaitingForInput && !sendingStatus[s.id]) {
@@ -338,7 +344,10 @@ export default function Home() {
             }
           })
         );
+        console.log('[fetchSessions] Updated sessions count:', updatedSessions.length);
         setSessions(updatedSessions);
+      } else {
+        console.log('[fetchSessions] data.sessions is undefined or null');
       }
     } catch (error) {
       console.error('Failed to fetch sessions', error);
@@ -520,7 +529,7 @@ export default function Home() {
     fetchTemplates();
     const interval = setInterval(fetchSessions, 2000);
     return () => clearInterval(interval);
-  }, [proxyMap, autoYesMap, userInteractedAt, killedSessionIds]);
+  }, []);
 
   useEffect(() => {
     if (!clientsDialog) {
@@ -539,6 +548,17 @@ export default function Home() {
     }
     return a.name.localeCompare(b.name);
   });
+
+  // Group sessions by hostId
+  const groupedSessions = topLevelSessions.reduce((acc, session) => {
+    const hostId = session.hostId || 'local';
+    const hostName = session.hostName || 'Local';
+    if (!acc[hostId]) {
+      acc[hostId] = { hostId, hostName, sessions: [] };
+    }
+    acc[hostId].sessions.push(session);
+    return acc;
+  }, {} as Record<string, { hostId: string; hostName: string; sessions: Session[] }>);
 
   const commanderSessions = [...sessions].sort((a, b) => {
     const scoreDiff = getSortScore(b) - getSortScore(a);
@@ -650,7 +670,14 @@ export default function Home() {
       </section>
 
       <div className="session-grid">
-        {topLevelSessions.map((session) => {
+        {Object.values(groupedSessions).map((hostGroup) => (
+          <div key={hostGroup.hostId} style={{ display: 'contents' }}>
+            {hostGroup.sessions.length > 0 && (
+              <div style={{ gridColumn: '1 / -1', marginTop: '2rem', marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--accent)', color: 'var(--accent)', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                ─ {hostGroup.hostName} {hostGroup.hostId !== 'local' ? `(${hostGroup.hostId})` : ''}
+              </div>
+            )}
+            {hostGroup.sessions.map((session) => {
           const childShells = sessions
             .filter(s => s.name.startsWith(`sh-${session.name}-`))
             .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0) || a.name.localeCompare(b.name));
@@ -823,7 +850,9 @@ export default function Home() {
               ))}
             </div>
           );
-        })}
+            })}
+          </div>
+        ))}
       </div>
 
       {clientsDialog ? (

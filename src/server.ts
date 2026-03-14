@@ -3,8 +3,8 @@ import { createServer } from 'http';
 import next from 'next';
 import { Server } from 'socket.io';
 import * as pty from 'node-pty';
-import { spawnSync } from 'child_process';
-import { resolveTmuxProvider } from './lib/tmux-provider';
+import { spawnSync, spawn } from 'child_process';
+import { buildSessionPool, type TmuxProvider } from './lib/tmux-provider';
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
@@ -18,9 +18,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Server] Unhandled Rejection:', reason);
 });
 
-const tmuxProvider = resolveTmuxProvider();
-const getTmuxArgs = (args: string[]) =>
-  tmuxProvider.socketPath ? ['-S', tmuxProvider.socketPath, ...args] : args;
+const sessionPool = buildSessionPool();
 
 type SessionMode = 'pty' | 'mirror';
 type SessionModePreference = 'auto' | 'mirror' | 'readonly-mirror' | 'attach' | 'resize-client';
@@ -72,16 +70,12 @@ function sanitizeSessionId(input: unknown) {
     .slice(0, 120);
 }
 
-function tmuxOutput(args: string[]) {
-  return tmuxProvider.exec(args);
-}
-
-function getSessionInfo(sessionId: string, preferredMode: SessionModePreference = 'auto'): SessionInfo {
-  const output = tmuxOutput([
+function getSessionInfo(provider: TmuxProvider, sessionName: string, preferredMode: SessionModePreference = 'auto'): SessionInfo {
+  const output = provider.exec([
     'display-message',
     '-p',
     '-t',
-    sessionId,
+    sessionName,
     '#{session_name}|#{session_attached}|#{pane_current_command}|#{pane_current_path}',
   ]);
   const [resolvedSessionId, attachedText, currentCommandRaw, currentPathRaw] = output.split('|');
@@ -127,9 +121,9 @@ function getSessionInfo(sessionId: string, preferredMode: SessionModePreference 
   };
 }
 
-function captureSession(sessionId: string) {
+function captureSession(provider: TmuxProvider, sessionName: string) {
   try {
-    const alt = tmuxOutput(['capture-pane', '-a', '-e', '-J', '-p', '-t', sessionId]);
+    const alt = provider.exec(['capture-pane', '-a', '-e', '-J', '-p', '-t', sessionName]);
     if (alt) {
       return alt;
     }
@@ -137,13 +131,13 @@ function captureSession(sessionId: string) {
   }
 
   try {
-    return tmuxOutput(['capture-pane', '-e', '-J', '-p', '-t', sessionId]);
+    return provider.exec(['capture-pane', '-e', '-J', '-p', '-t', sessionName]);
   } catch {
     return '';
   }
 }
 
-function sendMirrorData(sessionId: string, data: string) {
+function sendMirrorData(provider: TmuxProvider, sessionName: string, data: string) {
   const chunks: Array<{ literal?: string; key?: string }> = [];
   let buffer = '';
   let index = 0;
@@ -209,17 +203,18 @@ function sendMirrorData(sessionId: string, data: string) {
 
   for (const chunk of chunks) {
     if (chunk.literal) {
-      spawnSync('tmux', getTmuxArgs(['send-keys', '-l', '-t', sessionId, chunk.literal]), { encoding: 'utf-8' });
+      provider.exec(['send-keys', '-l', '-t', sessionName, chunk.literal]);
       continue;
     }
     if (chunk.key) {
-      spawnSync('tmux', getTmuxArgs(['send-keys', '-t', sessionId, chunk.key]), { encoding: 'utf-8' });
+      provider.exec(['send-keys', '-t', sessionName, chunk.key]);
     }
   }
 }
 
-function ensurePtyBridge(io: Server, info: SessionInfo, cols: number, rows: number) {
-  const existing = bridges.get(info.sessionId);
+function ensurePtyBridge(io: Server, provider: TmuxProvider, info: SessionInfo, cols: number, rows: number) {
+  const compositeId = `${provider.hostId}:${info.sessionId}`;
+  const existing = bridges.get(compositeId);
   if (existing && existing.mode === 'pty') {
     existing.lastActiveAt = Date.now();
     if (cols > 0 && rows > 0) {
@@ -231,20 +226,42 @@ function ensurePtyBridge(io: Server, info: SessionInfo, cols: number, rows: numb
     return existing;
   }
 
-  const ptyProcess = pty.spawn('tmux', getTmuxArgs(['attach-session', '-t', info.sessionId]), {
-    name: process.env.TERM || 'xterm-256color',
-    cols: cols > 0 ? cols : 120,
-    rows: rows > 0 ? rows : 32,
-    cwd: info.currentPath || process.cwd(),
-    env: {
-      ...process.env,
-      TERM: process.env.TERM || 'xterm-256color',
-      COLORTERM: 'truecolor',
-    } as Record<string, string>,
-  });
+  // For SSH providers, spawn ssh; for local, spawn tmux directly
+  const isLocal = provider.hostId === 'local';
+  let ptyProcess: pty.IPty;
+
+  if (isLocal) {
+    ptyProcess = pty.spawn('tmux', ['attach-session', '-t', info.sessionId], {
+      name: process.env.TERM || 'xterm-256color',
+      cols: cols > 0 ? cols : 120,
+      rows: rows > 0 ? rows : 32,
+      cwd: info.currentPath || process.cwd(),
+      env: {
+        ...process.env,
+        TERM: process.env.TERM || 'xterm-256color',
+        COLORTERM: 'truecolor',
+      } as Record<string, string>,
+    });
+  } else {
+    // SSH provider
+    const sshProvider = provider as any;
+    const sshTarget = sshProvider.sshTarget;
+    const socketPath = provider.socketPath || '/tmp/tmux-1000/default';
+    ptyProcess = pty.spawn('ssh', ['-t', sshTarget, 'tmux', '-S', socketPath, 'attach-session', '-t', info.sessionId], {
+      name: process.env.TERM || 'xterm-256color',
+      cols: cols > 0 ? cols : 120,
+      rows: rows > 0 ? rows : 32,
+      cwd: info.currentPath || process.cwd(),
+      env: {
+        ...process.env,
+        TERM: process.env.TERM || 'xterm-256color',
+        COLORTERM: 'truecolor',
+      } as Record<string, string>,
+    });
+  }
 
   const bridge: PtyBridge = {
-    sessionId: info.sessionId,
+    sessionId: compositeId,
     mode: 'pty',
     ptyProcess,
     sockets: new Set(),
@@ -263,13 +280,13 @@ function ensurePtyBridge(io: Server, info: SessionInfo, cols: number, rows: numb
 
   ptyProcess.onExit(({ exitCode, signal }) => {
     for (const socketId of bridge.sockets) {
-      io.to(socketId).emit('session-exit', { sessionId: info.sessionId, exitCode, signal });
+      io.to(socketId).emit('session-exit', { sessionId: compositeId, exitCode, signal });
       socketToSession.delete(socketId);
     }
-    bridges.delete(info.sessionId);
+    bridges.delete(compositeId);
   });
 
-  bridges.set(info.sessionId, bridge);
+  bridges.set(compositeId, bridge);
   return bridge;
 }
 
@@ -294,8 +311,9 @@ function destroyBridge(sessionId: string) {
   bridges.delete(sessionId);
 }
 
-function ensureMirrorBridge(io: Server, info: SessionInfo) {
-  const existing = bridges.get(info.sessionId);
+function ensureMirrorBridge(io: Server, provider: TmuxProvider, info: SessionInfo) {
+  const compositeId = `${provider.hostId}:${info.sessionId}`;
+  const existing = bridges.get(compositeId);
   if (existing && existing.mode === 'mirror') {
     existing.lastActiveAt = Date.now();
     existing.info = info;
@@ -303,14 +321,14 @@ function ensureMirrorBridge(io: Server, info: SessionInfo) {
   }
 
   const bridge: MirrorBridge = {
-    sessionId: info.sessionId,
+    sessionId: compositeId,
     mode: 'mirror',
     sockets: new Set(),
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
     pollTimer: setInterval(() => {
       try {
-        const snapshot = captureSession(info.sessionId);
+        const snapshot = captureSession(provider, info.sessionId);
         if (snapshot === bridge.lastSnapshot) {
           return;
         }
@@ -318,14 +336,14 @@ function ensureMirrorBridge(io: Server, info: SessionInfo) {
         bridge.lastActiveAt = Date.now();
         for (const socketId of bridge.sockets) {
           io.to(socketId).emit('terminal:snapshot', {
-            sessionId: info.sessionId,
+            sessionId: compositeId,
             data: snapshot,
           });
         }
       } catch (error) {
         for (const socketId of bridge.sockets) {
           io.to(socketId).emit('terminal:error', {
-            sessionId: info.sessionId,
+            sessionId: compositeId,
             message: error instanceof Error ? error.message : 'failed to capture session',
           });
         }
@@ -337,7 +355,7 @@ function ensureMirrorBridge(io: Server, info: SessionInfo) {
     readOnly: info.readOnly,
   };
 
-  bridges.set(info.sessionId, bridge);
+  bridges.set(compositeId, bridge);
   return bridge;
 }
 
@@ -380,7 +398,7 @@ app
       });
 
       socket.on('start', (payload: { sessionId?: string; cols?: number; rows?: number; preferredMode?: SessionModePreference }) => {
-        const sessionId = sanitizeSessionId(payload?.sessionId);
+        const compositeId = sanitizeSessionId(payload?.sessionId);
         const cols = Number(payload?.cols || 0);
         const rows = Number(payload?.rows || 0);
         const preferredMode: SessionModePreference =
@@ -391,7 +409,7 @@ app
             ? payload.preferredMode
             : 'auto';
 
-        if (!sessionId) {
+        if (!compositeId) {
           socket.emit('terminal:error', { message: 'sessionId is required' });
           return;
         }
@@ -399,51 +417,53 @@ app
         detachSocket(socket.id);
 
         try {
-          const info = getSessionInfo(sessionId, preferredMode);
-          const existing = bridges.get(info.sessionId);
+          const { provider, sessionName } = sessionPool.resolve(compositeId);
+          const info = getSessionInfo(provider, sessionName, preferredMode);
+          const bridgeKey = `${provider.hostId}:${info.sessionId}`;
+          const existing = bridges.get(bridgeKey);
           if (
             existing &&
             (existing.mode !== info.mode ||
               existing.resizeStrategy !== info.resizeStrategy ||
               existing.readOnly !== info.readOnly)
           ) {
-            destroyBridge(info.sessionId);
+            destroyBridge(bridgeKey);
           }
           const bridge =
             info.mode === 'mirror'
-              ? ensureMirrorBridge(io, info)
-              : ensurePtyBridge(io, info, cols, rows);
+              ? ensureMirrorBridge(io, provider, info)
+              : ensurePtyBridge(io, provider, info, cols, rows);
           bridge.sockets.add(socket.id);
           bridge.lastActiveAt = Date.now();
-          socketToSession.set(socket.id, info.sessionId);
+          socketToSession.set(socket.id, bridgeKey);
 
           socket.emit('terminal:status', {
             state: 'ready',
-            sessionId: info.sessionId,
+            sessionId: bridgeKey,
             message: `${info.mode.toUpperCase()}: ${info.reason}`,
             readOnly: info.readOnly,
           });
 
           if (info.mode === 'mirror') {
             io.to(socket.id).emit('terminal:snapshot', {
-              sessionId: info.sessionId,
-              data: captureSession(info.sessionId),
+              sessionId: bridgeKey,
+              data: captureSession(provider, info.sessionId),
             });
           }
         } catch (error) {
           socket.emit('terminal:error', {
-            sessionId,
+            sessionId: compositeId,
             message: error instanceof Error ? error.message : 'failed to attach terminal',
           });
         }
       });
 
       socket.on('command', (payload: { data?: string }) => {
-        const sessionId = socketToSession.get(socket.id);
-        if (!sessionId) {
+        const compositeId = socketToSession.get(socket.id);
+        if (!compositeId) {
           return;
         }
-        const bridge = bridges.get(sessionId);
+        const bridge = bridges.get(compositeId);
         if (!bridge) {
           return;
         }
@@ -456,15 +476,21 @@ app
           bridge.ptyProcess.write(data);
           return;
         }
-        sendMirrorData(sessionId, data);
+        // For mirror mode, we need to resolve the provider again
+        const [hostId, sessionName] = compositeId.split(':');
+        const provider = sessionPool.getProvider(hostId);
+        if (!provider) {
+          return;
+        }
+        sendMirrorData(provider, sessionName, data);
       });
 
       socket.on('resize', (payload: { cols?: number; rows?: number }) => {
-        const sessionId = socketToSession.get(socket.id);
-        if (!sessionId) {
+        const compositeId = socketToSession.get(socket.id);
+        if (!compositeId) {
           return;
         }
-        const bridge = bridges.get(sessionId);
+        const bridge = bridges.get(compositeId);
         if (!bridge) {
           return;
         }
@@ -474,21 +500,25 @@ app
           return;
         }
         bridge.lastActiveAt = Date.now();
+
+        // Resolve provider for tmux commands
+        const [hostId, sessionName] = compositeId.split(':');
+        const provider = sessionPool.getProvider(hostId);
+        if (!provider) {
+          return;
+        }
+
         if (bridge.mode === 'pty') {
           try {
             bridge.ptyProcess.resize(cols, rows);
           } catch {
           }
           if (bridge.resizeStrategy === 'tmux-window') {
-            spawnSync('tmux', getTmuxArgs(['resize-window', '-t', sessionId, '-x', String(cols), '-y', String(rows)]), {
-              encoding: 'utf-8',
-            });
+            provider.exec(['resize-window', '-t', sessionName, '-x', String(cols), '-y', String(rows)]);
           }
           return;
         }
-        spawnSync('tmux', getTmuxArgs(['resize-window', '-t', sessionId, '-x', String(cols), '-y', String(rows)]), {
-          encoding: 'utf-8',
-        });
+        provider.exec(['resize-window', '-t', sessionName, '-x', String(cols), '-y', String(rows)]);
       });
 
       socket.on('disconnect', () => {

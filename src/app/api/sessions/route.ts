@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs-extra';
 import path from 'path';
-import { resolveTmuxProvider } from '@/lib/tmux-provider';
+import { buildSessionPool } from '@/lib/tmux-provider';
 
 const USER_TEMPLATES_DIR = path.join(process.cwd(), 'templates/user');
 const DEFAULT_TEMPLATES_DIR = path.join(process.cwd(), 'templates/defaults');
@@ -97,90 +97,93 @@ ${templateInstruction.trim() || 'この role には追加テンプレート本�
 }
 
 export async function GET() {
-  const tmux = resolveTmuxProvider();
-  try {
-    const output = tmux.exec([
-      'ls',
-      '-F',
-      '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}',
-    ]);
+  const pool = buildSessionPool();
+  const allSessions = [];
 
-    const sessions = output
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
-        const currentCommand = tmux.exec(['display-message', '-p', '-t', name, '#{pane_current_command}']);
-        const currentPath = tmux.exec(['display-message', '-p', '-t', name, '#{pane_current_path}']);
+  for (const provider of pool.getAllProviders()) {
+    try {
+      const output = provider.exec([
+        'ls',
+        '-F',
+        '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}',
+      ]);
 
-        let clientOutput = '';
-        try {
-          clientOutput = tmux.exec([
-            'list-clients',
-            '-t',
+      const sessions = output
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
+          const currentCommand = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_command}']);
+          const currentPath = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_path}']);
+
+          let clientOutput = '';
+          try {
+            clientOutput = provider.exec([
+              'list-clients',
+              '-t',
+              name,
+              '-F',
+              '#{client_tty}__WORKOS__#{client_activity}',
+            ]);
+          } catch {
+            clientOutput = '';
+          }
+
+          const clientRows = clientOutput
+            ? clientOutput
+                .split('\n')
+                .filter(Boolean)
+                .map((row) => {
+                  const [, activity] = row.split('__WORKOS__');
+                  return Number.parseInt(activity || '0', 10) || 0;
+                })
+            : [];
+          const clientCount = clientRows.length;
+          const lastActivity = clientRows.length ? Math.max(...clientRows) : Number(created);
+          const lowerCommand = (currentCommand || command || '').toLowerCase();
+          const suggestedMode =
+            attached === '1'
+              ? 'mirror'
+              : ['bash', 'sh', 'zsh', 'fish'].includes(lowerCommand) || name.startsWith('sh-')
+                ? 'attach'
+                : 'mirror';
+          const compositeId = `${provider.hostId}:${name}`;
+          return {
+            id: compositeId,
             name,
-            '-F',
-            '#{client_tty}__WORKOS__#{client_activity}',
-          ]);
-        } catch {
-          clientOutput = '';
-        }
+            hostId: provider.hostId,
+            hostName: provider.displayName,
+            created: Number(created),
+            isAttached: attached === '1',
+            command: command || '',
+            directory: directory || '',
+            role: role || '',
+            instructionPath: instructionPath || '',
+            currentCommand,
+            currentPath,
+            clientCount,
+            lastActivity,
+            suggestedMode,
+          };
+        });
 
-        const clientRows = clientOutput
-          ? clientOutput
-              .split('\n')
-              .filter(Boolean)
-              .map((row) => {
-                const [, activity] = row.split('__WORKOS__');
-                return Number.parseInt(activity || '0', 10) || 0;
-              })
-          : [];
-        const clientCount = clientRows.length;
-        const lastActivity = clientRows.length ? Math.max(...clientRows) : Number(created);
-        const lowerCommand = (currentCommand || command || '').toLowerCase();
-        const suggestedMode =
-          attached === '1'
-            ? 'mirror'
-            : ['bash', 'sh', 'zsh', 'fish'].includes(lowerCommand) || name.startsWith('sh-')
-              ? 'attach'
-              : 'mirror';
-        return {
-          id: name,
-          name,
-          created: Number(created),
-          isAttached: attached === '1',
-          command: command || '',
-          directory: directory || '',
-          role: role || '',
-          instructionPath: instructionPath || '',
-          currentCommand,
-          currentPath,
-          clientCount,
-          lastActivity,
-          suggestedMode,
-        };
-      });
-
-    return NextResponse.json({ sessions });
-  } catch (error: any) {
-    const message = error.message || '';
-    if (
-      message.includes('no server running') ||
-      message.includes('error connecting') ||
-      message.includes('failed to connect')
-    ) {
-      return NextResponse.json({ sessions: [] });
+      allSessions.push(...sessions);
+    } catch (error: any) {
+      const message = error.message || '';
+      if (!message.includes('no server running') && !message.includes('error connecting') && !message.includes('failed to connect')) {
+        console.warn(`[API] sessions GET error on ${provider.hostId}:`, message);
+      }
     }
-    console.error('[API] sessions GET error:', message);
-    return NextResponse.json({ sessions: [] });
   }
+
+  return NextResponse.json({ sessions: allSessions });
 }
 
 export async function POST(request: Request) {
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
   try {
-    const { name, command, cwd, templateName } = await request.json();
+    const { name, command, cwd, templateName, hostId = 'local' } = await request.json();
 
     if (!name || !command || !cwd) {
       return NextResponse.json(
@@ -194,6 +197,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'invalid session name' }, { status: 400 });
     }
 
+    const provider = pool.getProvider(String(hostId));
+    if (!provider) {
+      return NextResponse.json(
+        { error: `host not found: ${hostId}` },
+        { status: 400 }
+      );
+    }
+
     await fs.ensureDir(cwd);
 
     const templateDir = resolveTemplateDir(templateName);
@@ -205,18 +216,21 @@ export async function POST(request: Request) {
     const cmdTokens = runtimeInstruction
       ? [String(command), runtimeInstruction.instructionPath]
       : String(command).split(/\s+/);
-    tmux.exec(['new-session', '-d', '-s', sessionName, '-c', String(cwd), ...cmdTokens]);
+    provider.exec(['new-session', '-d', '-s', sessionName, '-c', String(cwd), ...cmdTokens]);
 
     const finalCommand = cmdTokens.join(' ');
 
-    tmux.exec(['set-option', '-t', sessionName, '@workos_command', String(command)]);
-    tmux.exec(['set-option', '-t', sessionName, '@workos_directory', String(cwd)]);
-    tmux.exec(['set-option', '-t', sessionName, '@workos_role', templateName ? String(templateName) : '']);
-    tmux.exec(['set-option', '-t', sessionName, '@workos_instruction_path', runtimeInstruction ? runtimeInstruction.instructionPath : '']);
+    provider.exec(['set-option', '-t', sessionName, '@workos_command', String(command)]);
+    provider.exec(['set-option', '-t', sessionName, '@workos_directory', String(cwd)]);
+    provider.exec(['set-option', '-t', sessionName, '@workos_role', templateName ? String(templateName) : '']);
+    provider.exec(['set-option', '-t', sessionName, '@workos_instruction_path', runtimeInstruction ? runtimeInstruction.instructionPath : '']);
 
+    const compositeId = `${provider.hostId}:${sessionName}`;
     return NextResponse.json({
-      message: `Session ${sessionName} started`,
+      message: `Session ${sessionName} started on ${provider.displayName}`,
+      compositeId,
       sessionName,
+      hostId: provider.hostId,
       cwd,
       command: finalCommand,
       instructionPath: runtimeInstruction?.instructionPath ?? null,

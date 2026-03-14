@@ -1,16 +1,17 @@
 import { NextResponse } from 'next/server';
-import { resolveTmuxProvider } from '@/lib/tmux-provider';
+import { buildSessionPool } from '@/lib/tmux-provider';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
 
   try {
-    const output = tmux.exec([
-      'list-clients', '-t', id,
+    const { provider, sessionName } = pool.resolve(id);
+    const output = provider.exec([
+      'list-clients', '-t', sessionName,
       '-F', '#{client_name}\t#{client_pid}\t#{client_tty}\t#{client_width}x#{client_height}\t#{client_created}\t#{client_activity}\t#{client_termname}',
     ]);
 
@@ -48,16 +49,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
 
   try {
+    const { provider, sessionName } = pool.resolve(id);
     const { action, tty, pid } = await request.json();
 
     if (action === 'detach-all') {
-      const output = tmux.exec(['list-clients', '-t', id, '-F', '#{client_tty}']);
+      const output = provider.exec(['list-clients', '-t', sessionName, '-F', '#{client_tty}']);
       const ttys = output ? output.split('\n').filter(Boolean) : [];
       for (const currentTty of ttys) {
-        tmux.exec(['detach-client', '-t', currentTty]);
+        provider.exec(['detach-client', '-t', currentTty]);
       }
       return NextResponse.json({ ok: true, action, sessionId: id, detached: ttys });
     }
@@ -66,7 +68,7 @@ export async function POST(
       if (!tty) {
         return NextResponse.json({ error: 'tty is required' }, { status: 400 });
       }
-      tmux.exec(['detach-client', '-t', tty]);
+      provider.exec(['detach-client', '-t', tty]);
       return NextResponse.json({ ok: true, action, tty, sessionId: id });
     }
 

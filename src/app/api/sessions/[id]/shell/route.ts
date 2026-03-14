@@ -1,26 +1,30 @@
 import { NextResponse } from 'next/server';
-import { resolveTmuxProvider } from '@/lib/tmux-provider';
+import { buildSessionPool } from '@/lib/tmux-provider';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tmux = resolveTmuxProvider();
+  const pool = buildSessionPool();
 
   try {
+    const { provider, sessionName } = pool.resolve(id);
+
     // 1. 指定されたセッションの現在のパス(CWD)を取得
-    const cwd = tmux.exec(['display-message', '-p', '-t', id, '#{pane_current_path}']);
+    const cwd = provider.exec(['display-message', '-p', '-t', sessionName, '#{pane_current_path}']);
 
     // 2. 新しいセッション名を生成 (sh-元の名前-時刻)
-    const newSessionName = `sh-${id}-${Date.now().toString().slice(-4)}`;
+    const newSessionName = `sh-${sessionName}-${Date.now().toString().slice(-4)}`;
 
     // 3. そのパスで bash セッションを起動
-    tmux.exec(['new-session', '-d', '-s', newSessionName, '-c', cwd, 'bash']);
+    provider.exec(['new-session', '-d', '-s', newSessionName, '-c', cwd, 'bash']);
 
+    const compositeId = `${provider.hostId}:${newSessionName}`;
     return NextResponse.json({
       message: `Opened shell in ${cwd}`,
       newSession: newSessionName,
+      compositeId,
       cwd
     });
   } catch (error: any) {
