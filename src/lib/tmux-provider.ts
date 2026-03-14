@@ -99,11 +99,13 @@ class SshTmuxProvider implements TmuxProvider {
   }
 
   exec(args: string[]): string {
-    // Build tmux command with proper escaping for SSH
-    const tmuxCmd = ['tmux', '-S', this.socketPath, ...args]
+    // Build tmux command with proper escaping for bash -c
+    const tmuxArgs = ['tmux', '-S', this.socketPath, ...args]
       .map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
       .join(' ');
-    const cmd = ['ssh', '-t', ...this.sshOpts, this.sshTarget, 'bash', '-c', tmuxCmd];
+    // Pass remote command as a single string argument to ssh
+    const remoteCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
+    const cmd = ['ssh', ...this.sshOpts, this.sshTarget, remoteCmd];
     return execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
   }
 
