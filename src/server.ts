@@ -243,7 +243,7 @@ function ensurePtyBridge(io: Server, provider: TmuxProvider, info: SessionInfo, 
       } as Record<string, string>,
     });
   } else {
-    // SSH provider
+    // SSH provider - cwd must be a valid path in the container, not on the remote host
     const sshProvider = provider as any;
     const sshTarget = sshProvider.sshTarget;
     const socketPath = provider.socketPath || '/tmp/tmux-1000/default';
@@ -251,7 +251,7 @@ function ensurePtyBridge(io: Server, provider: TmuxProvider, info: SessionInfo, 
       name: process.env.TERM || 'xterm-256color',
       cols: cols > 0 ? cols : 120,
       rows: rows > 0 ? rows : 32,
-      cwd: info.currentPath || process.cwd(),
+      cwd: process.cwd(),
       env: {
         ...process.env,
         TERM: process.env.TERM || 'xterm-256color',
