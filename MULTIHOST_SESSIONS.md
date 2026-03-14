@@ -126,6 +126,47 @@ SshTmuxProvider は以下のオプションで SSH 接続を管理します：
 ]
 ```
 
+### 環境ベースの設定（`.env` ファイル）
+
+**重要:** より詳細な設定方法については [`services/work-os/CONFIGURATION.md`](./services/work-os/CONFIGURATION.md) を参照してください。
+
+複数環境での動作を容易にするため、work-os は環境変数ベースの設定をサポートしています。
+
+#### 簡単セットアップ
+
+```bash
+cd services/work-os
+cp .env.example .env
+# .env を自分の環境に合わせて編集
+docker-compose up
+```
+
+#### .env ファイル例
+
+```ini
+# HVU ホスト設定
+HVU_HOST_ID=hvu
+HVU_DISPLAY_NAME=HVU (Host)
+HVU_SSH_TARGET=opa@192.168.1.50
+HVU_SOCKET_PATH=/tmp/tmux-1000/default
+
+# WSL ホスト設定
+WSL_HOST_ID=wsl
+WSL_DISPLAY_NAME=WSL
+WSL_SSH_TARGET=opa@172.29.214.157
+WSL_SOCKET_PATH=/tmp/tmux-1000/default
+
+# ボリュームマウントパス
+WORK_OS_SOURCE_PATH=/home/opa/work/work-os
+SSH_KEY_PATH=/root/.ssh
+```
+
+#### 利点
+
+- **ポータビリティ**: IP アドレス、ユーザー名などをハードコードしないため、異なる環境で使用可能
+- **セキュリティ**: SSH 鍵、パスなどを`.env` ファイル（Git ignore）に保管可能
+- **柔軟性**: 環境変数で複数ホスト構成を管理
+
 ---
 
 ## API 仕様
@@ -392,31 +433,36 @@ wsl --shutdown
 
 この設定により、WSL のポート（SSH 22 など）が Windows ホストのネットワークインターフェースに公開されます。
 
-##### Step 3: docker-compose.yml を編集
+##### Step 3: `.env` ファイルを設定
 
-```yaml
-services:
-  work-os:
-    environment:
-      - WORK_OS_HOSTS=[
-          {
-            "hostId": "hvu",
-            "displayName": "HVU (Host)",
-            "type": "ssh",
-            "sshTarget": "opa@192.168.1.50",
-            "socketPath": "/tmp/tmux-1000/default"
-          },
-          {
-            "hostId": "wsl",
-            "displayName": "WSL",
-            "type": "ssh",
-            "sshTarget": "opa@172.29.214.157",
-            "socketPath": "/tmp/tmux-1000/default"
-          }
-        ]
-    volumes:
-      - /root/.ssh:/root/.ssh
+`services/work-os/.env` ファイルを作成し、ホスト情報を設定：
+
+```bash
+cd services/work-os
+cp .env.example .env
 ```
+
+`.env` を編集して、自分の環境に合わせます：
+
+```ini
+# HVU設定（ローカルホスト）
+HVU_HOST_ID=hvu
+HVU_DISPLAY_NAME=HVU (Host)
+HVU_SSH_TARGET=opa@192.168.1.50
+HVU_SOCKET_PATH=/tmp/tmux-1000/default
+
+# WSL設定（リモートホスト）
+WSL_HOST_ID=wsl
+WSL_DISPLAY_NAME=WSL
+WSL_SSH_TARGET=opa@172.29.214.157
+WSL_SOCKET_PATH=/tmp/tmux-1000/default
+
+# ボリュームマウント設定
+WORK_OS_SOURCE_PATH=/home/opa/work/work-os
+SSH_KEY_PATH=/root/.ssh
+```
+
+`docker-compose.yml` は環境変数を自動的に読み込むため、追加の編集は不要です。
 
 ##### Step 4: WSL 側の確認
 
