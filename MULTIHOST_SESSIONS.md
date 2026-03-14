@@ -347,38 +347,92 @@ docker exec work-os-app tmux -S /tmp/tmux-1000/default ls
 
 #### 3. WSL セッション統合（オプション）
 
-**docker-compose.yml を編集:**
+##### Step 1: SSH キー認証設定
+
+HVU コンテナで ED25519 キーペアを生成：
+
+```bash
+docker exec work-os bash -c '
+ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519 -N ""
+cat /root/.ssh/id_ed25519.pub
+'
+```
+
+出力された公開キーを WSL の `~/.ssh/authorized_keys` に追加：
+
+```bash
+# WSL側で実行
+mkdir -p ~/.ssh
+echo "ssh-ed25519 AAAAC3NzaC1..." >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+```
+
+##### Step 2: Windows WSL 設定
+
+Windows ホストで `.wslconfig` を編集：
+
+```powershell
+# PowerShell で実行
+notepad $env:USERPROFILE\.wslconfig
+```
+
+以下を追加：
+
+```ini
+[interop]
+localhostForwarding=false
+```
+
+保存後、WSL を再起動：
+
+```powershell
+wsl --shutdown
+```
+
+この設定により、WSL のポート（SSH 22 など）が Windows ホストのネットワークインターフェースに公開されます。
+
+##### Step 3: docker-compose.yml を編集
 
 ```yaml
 services:
-  app:
+  work-os:
     environment:
       - WORK_OS_HOSTS=[
           {
-            "hostId": "local",
-            "displayName": "HVU Local",
-            "type": "local"
+            "hostId": "hvu",
+            "displayName": "HVU (Host)",
+            "type": "ssh",
+            "sshTarget": "opa@192.168.1.50",
+            "socketPath": "/tmp/tmux-1000/default"
           },
           {
             "hostId": "wsl",
-            "displayName": "WSL (Windows)",
+            "displayName": "WSL",
             "type": "ssh",
-            "sshTarget": "opa@172.31.128.1",
+            "sshTarget": "opa@172.29.214.157",
             "socketPath": "/tmp/tmux-1000/default"
           }
         ]
     volumes:
-      - /home/opa/.ssh:/root/.ssh:ro
+      - /root/.ssh:/root/.ssh
 ```
 
-**WSL 側の準備:**
+##### Step 4: WSL 側の確認
 
 ```bash
-# WSL でtmuxソケットディレクトリ作成
-mkdir -p /tmp/tmux-1000
+# SSH サーバー起動確認
+sudo systemctl status ssh
 
-# SSH キー認証でログイン可能か確認
-ssh -o BatchMode=yes opa@172.31.128.1 tmux ls
+# tmux セッション確認
+tmux -S /tmp/tmux-1000/default ls
+```
+
+##### Step 5: 接続テスト
+
+```bash
+# HVU側で実行
+ssh opa@192.168.1.50 "docker exec work-os ssh opa@172.29.214.157 'tmux -S /tmp/tmux-1000/default ls'"
 ```
 
 ### ダッシュボード操作
@@ -464,24 +518,66 @@ tmux -V  # ホスト側
 ### 問題: WSL SSH 接続がタイムアウト
 
 ```
-ssh: connect to host 172.31.128.1 port 22: Connection timed out
+ssh: connect to host 172.29.214.157 port 22: Connection timed out
 ```
 
 **原因:**
-- WSL の IP アドレスが異なる
-- SSH が WSL で起動していない
-- ファイアウォール設定
+1. WSL ポートが Windows ホストネットワークに公開されていない
+2. WSL `.wslconfig` の `localhostForwarding=false` 設定がない
+3. WSL が再起動されていない
 
 **対策:**
+
+**A) Windows .wslconfig を確認・編集**
+
+```powershell
+# .wslconfig の内容確認
+type $env:USERPROFILE\.wslconfig
+
+# [interop] セクションに以下が含まれているか確認
+# [interop]
+# localhostForwarding=false
+
+# ない場合は追加してファイルを保存
+```
+
+**B) WSL を再起動**
+
+```powershell
+# PowerShell で実行
+wsl --shutdown
+
+# WSL を再起動（WSLのセッションが終わった後）
+wsl
+```
+
+**C) WSL IP アドレス確認**
+
 ```bash
-# WSL の IP 確認
-wsl hostname -I
+# WSL側で実行
+hostname -I
+# 出力例: 172.29.214.157 192.168.1.50
 
-# コンテナから SSH 疎通確認
-docker exec work-os-app ssh -o ConnectTimeout=5 opa@<WSL-IP> 'tmux -V'
+# HVU側で確認
+ssh opa@192.168.1.50 "ping -c 1 172.29.214.157"
+```
 
-# SSH キー認証設定
-docker exec work-os-app ssh-copy-id -i /root/.ssh/id_rsa.pub opa@<WSL-IP>
+**D) ルーティング確認**
+
+```bash
+# HVU側で実行
+ssh opa@192.168.1.50 "ip route | grep 172"
+# 172.29.0.0 へのルートが表示されるか確認
+```
+
+**E) SSH キー認証確認**
+
+```bash
+# HVU側で実行
+ssh opa@192.168.1.50 "cat /root/.ssh/id_ed25519.pub"
+
+# WSL側で確認
+cat ~/.ssh/authorized_keys | grep "id_ed25519"
 ```
 
 ### 問題: API で「host not found」エラー
@@ -541,6 +637,56 @@ src/
 - `resolveTmuxProvider()` は従来通り利用可能
 - 既存コードとの互換性を維持
 - デフォルト（設定なし）で `local:` プレフィックスが自動付与
+
+---
+
+## Session 5 実装更新（WSL 統合完全対応）
+
+### 変更履歴
+
+#### SSH コマンド実行の修正
+
+**問題:** execFileSync で複数の SSH オプションを渡すと、bash -c への引数がトークンで分割されていた
+
+**修正内容:**
+```typescript
+// 変更前（失敗）
+const cmd = ['ssh', ...sshOpts, sshTarget, 'bash', '-c', `TERM=xterm ${bashCmd}`];
+
+// 変更後（成功）- リモートコマンドを単一文字列として渡す
+const remoteCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
+const cmd = ['ssh', ...sshOpts, sshTarget, remoteCmd];
+```
+
+**影響:** HVU と WSL の両ホストから正常に tmux コマンドが実行可能に
+
+#### セッション接続の改善
+
+1. **複合 ID パース:** `hvu:aerie-platform` の形式を保持し、`:` を削除しないように修正
+2. **SSH PTY 作業ディレクトリ:** リモートパスではなくコンテナ内の有効なパスを使用
+3. **SSH 設定:** `StrictHostKeyChecking=accept-new` で未知ホストの自動受け入れ
+
+#### Docker SSH 設定
+
+```
+Host *
+  StrictHostKeyChecking accept-new
+  BatchMode yes
+  ConnectTimeout 5
+  ServerAliveInterval 5
+  ServerAliveCountMax 2
+
+Host 172.29.214.157
+  ConnectTimeout 2
+  ServerAliveInterval 1
+  ServerAliveCountMax 1
+```
+
+### 対応バージョン
+
+- work-os: v0.1.19+
+- Node: 20.x
+- TypeScript: 5.x
 
 ---
 
