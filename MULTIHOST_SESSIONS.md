@@ -690,6 +690,138 @@ Host 172.29.214.157
 
 ---
 
+## セキュリティ考慮事項
+
+### 認証方式の比較
+
+| 方式 | セキュリティ | 実装コスト | 複雑性 | 推奨シーン |
+|------|-----------|---------|-------|---------|
+| **SSH キー認証** | ✅ 高（デフォルト） | 中 | 中 | **本番環境（現在）** |
+| **REST API + API Key** | ⚠️ 中（設定が必須） | 高 | 高 | 単一ホスト管理 |
+| **REST API + JWT** | ✅ 高 | 高 | 高 | 複数ホスト（将来） |
+| **REST API + mTLS** | ✅ 高 | 最高 | 最高 | 高セキュリティ要件 |
+| **Agent（認証なし）** | ❌ 低 | 低 | 低 | 開発環境のみ |
+
+### 現在の SSH ベース実装（推奨）
+
+**メリット：**
+- SSH の認証・暗号化がデフォルトで有効
+- 追加のセキュリティ設定が不要
+- ホスト検証が組み込まれている
+
+**セキュリティ強化設定：**
+
+```typescript
+class SecureSshTmuxProvider implements TmuxProvider {
+  private readonly sshOpts = [
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=5',
+    '-o', 'IdentitiesOnly=yes',        // 認証済みキーのみ使用
+    '-o', 'PreferredAuthentications=publickey', // 公開キー認証のみ
+    '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'UserKnownHostsFile=/root/.ssh/known_hosts',
+    '-o', 'ControlMaster=auto',
+    '-o', 'ControlPath=/tmp/ssh-wos-%r@%h:%p',
+    '-o', 'ControlPersist=60'
+  ];
+}
+```
+
+---
+
+## REST API アーキテクチャ（将来の参考）
+
+### 代替案：ホスト Agent パターン
+
+各サーバーで小型 HTTP サーバー（Agent）を運用：
+
+```
+work-os (Docker)
+  ├─ HTTP/REST → HVU Agent (192.168.1.50:3001)
+  ├─ HTTP/REST → WSL Agent (172.29.214.157:3001)
+  └─ HTTP/REST → その他サーバー Agent
+```
+
+### REST API エンドポイント案
+
+```typescript
+// セッション管理
+GET    /tmux/sessions              // セッション一覧
+POST   /tmux/sessions              // 新規作成
+GET    /tmux/sessions/{id}         // 詳細取得
+DELETE /tmux/sessions/{id}         // 終了
+
+// ターミナル操作
+GET    /tmux/sessions/{id}/output  // 出力取得
+POST   /tmux/sessions/{id}/send-key   // キー送信
+POST   /tmux/sessions/{id}/send-text  // テキスト送信
+WS     /tmux/sessions/{id}/stream  // リアルタイムストリーム
+```
+
+### セキュアな実装例
+
+```typescript
+// API Key 認証
+app.use((req, res, next) => {
+  const key = req.headers['x-api-key'];
+  if (key !== process.env.AGENT_API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
+// JWT 認証
+const token = jwt.sign({ host: 'hvu', iat: Date.now() },
+  process.env.JWT_SECRET,
+  { expiresIn: '1h' }
+);
+
+// HTTPS + mTLS（最高セキュリティ）
+const tlsOptions = {
+  key: fs.readFileSync('/etc/agent/private.key'),
+  cert: fs.readFileSync('/etc/agent/certificate.pem'),
+  ca: fs.readFileSync('/etc/agent/ca.pem'),
+  requestCert: true,
+  rejectUnauthorized: true
+};
+
+https.createServer(tlsOptions, app).listen(3001);
+```
+
+### メリット/デメリット
+
+**REST API メリット：**
+- 言語非依存（任意の言語で Agent を実装可能）
+- スケーラブル（サーバー追加が容易）
+- API バージョニング可能
+- HTTP キャッシング活用可
+
+**REST API デメリット：**
+- 認証・暗号化の実装が必須
+- ネットワーク遅延が増加
+- 認証情報管理の複雑さ
+
+---
+
+## 実装ロードマップ
+
+### Phase 1: SSH ベース（現在 ✅）
+- HVU → WSL 接続完全対応
+- SSH キー認証
+- 複合 ID による複数ホスト管理
+
+### Phase 2: REST API（オプション、複数ホスト時）
+- 複数リモートサーバー対応時に検討
+- JWT 認証実装
+- API ゲートウェイ導入
+
+### Phase 3: mTLS（エンタープライズ対応）
+- 証明書ベース認証
+- 相互 TLS
+- 監査ログ
+
+---
+
 ## 今後の拡張
 
 - [ ] 複数 SSH ホストの並列管理
@@ -697,4 +829,6 @@ Host 172.29.214.157
 - [ ] SSH キーペア自動交換
 - [ ] ホスト冗長化・フェイルオーバー
 - [ ] Web UI でのホスト追加・削除機能
+- [ ] REST API オプション実装（Phase 2）
+- [ ] 監査ログ機能
 
