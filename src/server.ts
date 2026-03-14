@@ -398,7 +398,7 @@ app
       });
 
       socket.on('start', (payload: { sessionId?: string; cols?: number; rows?: number; preferredMode?: SessionModePreference }) => {
-        const compositeId = sanitizeSessionId(payload?.sessionId);
+        const compositeId = String(payload?.sessionId || '').trim();
         const cols = Number(payload?.cols || 0);
         const rows = Number(payload?.rows || 0);
         const preferredMode: SessionModePreference =
