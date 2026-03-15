@@ -79,10 +79,12 @@ class SshTmuxProvider implements TmuxProvider {
   readonly sshTarget: string; // Made public for server.ts access
   readonly providerType = 'ssh' as const;
 
+  private sshExtraOpts: string[] = [];
+
   constructor(
     readonly hostId: string,
     readonly displayName: string,
-    sshTarget: string, // "opa@172.x.x.x"
+    sshTarget: string, // "opa@host" or "opa@host -p PORT"
     remoteSocketPath: string,
     private readonly sshOpts: string[] = [
       '-o',
@@ -99,19 +101,68 @@ class SshTmuxProvider implements TmuxProvider {
       'StrictHostKeyChecking=accept-new',
     ]
   ) {
-    this.sshTarget = sshTarget;
+    // Parse sshTarget for port specification: "user@host -p PORT"
+    const parts = sshTarget.split(' ');
+    this.sshTarget = parts[0]; // user@host
+    if (parts.length > 1) {
+      this.sshExtraOpts = parts.slice(1); // -p PORT or other options
+    }
     this.socketPath = remoteSocketPath;
   }
 
   exec(args: string[]): string {
-    // Build tmux command with proper escaping for bash -c
+    // Special handling for 'ls' command: fetch from all tmux sockets
+    if (args[0] === 'ls') {
+      return this.execListAllSockets(args);
+    }
+
+    // Standard execution for other commands (using configured socket)
     const tmuxArgs = ['tmux', '-S', this.socketPath, ...args]
       .map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
       .join(' ');
     // Pass remote command as a single string argument to ssh
     const remoteCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
-    const cmd = ['ssh', ...this.sshOpts, this.sshTarget, remoteCmd];
+    const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, remoteCmd];
     return execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
+  }
+
+  /**
+   * Execute list-sessions across all available tmux sockets on the remote host
+   */
+  private execListAllSockets(args: string[]): string {
+    const formatArg = args[args.length - 1];
+
+    // Properly escape formatArg for bash (single-quote safe)
+    const escapedFormat = formatArg.replace(/'/g, "'\\''");
+
+    // Build a bash script that:
+    // 1. Finds all tmux sockets
+    // 2. Lists sessions from each socket
+    // 3. Aggregates results
+    const bashScript = `
+      for sock in /tmp/tmux-*/default; do
+        if [ -S "$sock" ]; then
+          tmux -S "$sock" ls -F '${escapedFormat}' 2>/dev/null || true
+        fi
+      done
+    `.trim();
+
+    const escapedScript = bashScript.replace(/'/g, "'\\''");
+    const remoteCmd = `bash -c "TERM=xterm bash -c '${escapedScript}'"`;
+    const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, remoteCmd];
+
+    try {
+      return execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
+    } catch (error: any) {
+      // If multi-socket approach fails, fall back to single socket
+      console.warn(`[tmux-provider] multi-socket list failed, falling back to single socket`);
+      const tmuxArgs = ['tmux', '-S', this.socketPath, ...args]
+        .map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
+        .join(' ');
+      const fallbackCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
+      const fallbackExecCmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, fallbackCmd];
+      return execFileSync(fallbackExecCmd[0], fallbackExecCmd.slice(1), { encoding: 'utf-8' }).trim();
+    }
   }
 
   isAvailable(): boolean {
@@ -230,12 +281,8 @@ export class HttpRemoteProvider implements TmuxProvider {
   }
 
   isAvailable(): boolean {
-    try {
-      this.httpRequest('GET', '/healthz');
-      return true;
-    } catch {
-      return false;
-    }
+    // HTTP providers are available if configured (network checks happen at runtime)
+    return true;
   }
 }
 

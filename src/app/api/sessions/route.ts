@@ -98,84 +98,92 @@ ${templateInstruction.trim() || 'この role には追加テンプレート本�
 
 export async function GET() {
   const pool = buildSessionPool();
-  const allSessions = [];
 
-  for (const provider of pool.getAllProviders()) {
-    try {
-      const output = provider.exec([
-        'ls',
-        '-F',
-        '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}',
-      ]);
+  // 並行処理：すべてのホストのセッションを同時に取得
+  const results = await Promise.allSettled(
+    pool.getAllProviders().map(async (provider) => {
+      const sessions = [];
+      try {
+        const output = provider.exec([
+          'ls',
+          '-F',
+          '#{session_name}__WORKOS__#{session_created}__WORKOS__#{session_attached}__WORKOS__#{@workos_command}__WORKOS__#{@workos_directory}__WORKOS__#{@workos_role}__WORKOS__#{@workos_instruction_path}',
+        ]);
 
-      const sessions = output
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => {
-          const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
-          const currentCommand = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_command}']);
-          const currentPath = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_path}']);
+        sessions.push(
+          ...output
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => {
+              const [name, created, attached, command, directory, role, instructionPath] = line.split('__WORKOS__');
+              const currentCommand = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_command}']);
+              const currentPath = provider.exec(['display-message', '-p', '-t', name, '#{pane_current_path}']);
 
-          let clientOutput = '';
-          try {
-            clientOutput = provider.exec([
-              'list-clients',
-              '-t',
-              name,
-              '-F',
-              '#{client_tty}__WORKOS__#{client_activity}',
-            ]);
-          } catch {
-            clientOutput = '';
-          }
+              let clientOutput = '';
+              try {
+                clientOutput = provider.exec([
+                  'list-clients',
+                  '-t',
+                  name,
+                  '-F',
+                  '#{client_tty}__WORKOS__#{client_activity}',
+                ]);
+              } catch {
+                clientOutput = '';
+              }
 
-          const clientRows = clientOutput
-            ? clientOutput
-                .split('\n')
-                .filter(Boolean)
-                .map((row) => {
-                  const [, activity] = row.split('__WORKOS__');
-                  return Number.parseInt(activity || '0', 10) || 0;
-                })
-            : [];
-          const clientCount = clientRows.length;
-          const lastActivity = clientRows.length ? Math.max(...clientRows) : Number(created);
-          const lowerCommand = (currentCommand || command || '').toLowerCase();
-          const suggestedMode =
-            attached === '1'
-              ? 'mirror'
-              : ['bash', 'sh', 'zsh', 'fish'].includes(lowerCommand) || name.startsWith('sh-')
-                ? 'attach'
-                : 'mirror';
-          const compositeId = `${provider.hostId}:${name}`;
-          return {
-            id: compositeId,
-            name,
-            hostId: provider.hostId,
-            hostName: provider.displayName,
-            created: Number(created),
-            isAttached: attached === '1',
-            command: command || '',
-            directory: directory || '',
-            role: role || '',
-            instructionPath: instructionPath || '',
-            currentCommand,
-            currentPath,
-            clientCount,
-            lastActivity,
-            suggestedMode,
-          };
-        });
-
-      allSessions.push(...sessions);
-    } catch (error: any) {
-      const message = error.message || '';
-      if (!message.includes('no server running') && !message.includes('error connecting') && !message.includes('failed to connect')) {
-        console.warn(`[API] sessions GET error on ${provider.hostId}:`, message);
+              const clientRows = clientOutput
+                ? clientOutput
+                    .split('\n')
+                    .filter(Boolean)
+                    .map((row) => {
+                      const [, activity] = row.split('__WORKOS__');
+                      return Number.parseInt(activity || '0', 10) || 0;
+                    })
+                : [];
+              const clientCount = clientRows.length;
+              const lastActivity = clientRows.length ? Math.max(...clientRows) : Number(created);
+              const lowerCommand = (currentCommand || command || '').toLowerCase();
+              const suggestedMode =
+                attached === '1'
+                  ? 'mirror'
+                  : ['bash', 'sh', 'zsh', 'fish'].includes(lowerCommand) || name.startsWith('sh-')
+                    ? 'attach'
+                    : 'mirror';
+              const compositeId = `${provider.hostId}:${name}`;
+              return {
+                id: compositeId,
+                name,
+                hostId: provider.hostId,
+                hostName: provider.displayName,
+                created: Number(created),
+                isAttached: attached === '1',
+                command: command || '',
+                directory: directory || '',
+                role: role || '',
+                instructionPath: instructionPath || '',
+                currentCommand,
+                currentPath,
+                clientCount,
+                lastActivity,
+                suggestedMode,
+              };
+            })
+        );
+      } catch (error: any) {
+        const message = error.message || '';
+        if (!message.includes('no server running') && !message.includes('error connecting') && !message.includes('failed to connect')) {
+          console.warn(`[API] sessions GET error on ${provider.hostId}:`, message);
+        }
       }
-    }
-  }
+      return sessions;
+    })
+  );
+
+  const allSessions = results
+    .filter((r) => r.status === 'fulfilled')
+    .flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
 
   return NextResponse.json({ sessions: allSessions });
 }

@@ -7,7 +7,7 @@
     "dev:agent": "ts-node --project tsconfig.agent.json agent/index.ts",
     "build": "next build && tsc --project tsconfig.server.json && tsc --project tsconfig.agent.json",
     "start": "NODE_ENV=production node dist/server.js",
-    "start:agent": "NODE_ENV=production node dist/agent.js",
+    "start:agent": "NODE_ENV=production node dist/index.js",
     "lint": "next lint"
   },
   "dependencies": {

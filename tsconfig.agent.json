@@ -1,13 +1,19 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["esnext"],
     "module": "CommonJS",
     "moduleResolution": "node",
     "outDir": "dist",
     "noEmit": false,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["agent/**/*.ts"]
+  "include": ["agent/**/*.ts"],
+  "exclude": ["node_modules"]
 }
