@@ -17,6 +17,9 @@ Work OS is a browser-based tmux operations console for running and supervising l
 - Lists tmux clients and lets you detach or kill them
 - Launches new agent sessions with a chosen command, working directory, and template
 - Opens child shell sessions in the same working directory
+- **Multi-Host Session Management:** Aggregates tmux sessions from multiple hosts (HVU via SSH, WSL via HTTP agent)
+- **Session Sort Controls:** Sort sessions by creation time, activity, or name for organized workflow
+- **HTTP Agent Bridge:** Enables Docker containers to communicate with remote tmux agents via REST API
 
 ### How To Use
 

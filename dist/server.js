@@ -517,10 +517,13 @@ app
             }
             bridge.lastActiveAt = Date.now();
             const data = String((payload === null || payload === void 0 ? void 0 : payload.data) || '');
+            console.log(`[command] session: ${compositeId}, mode: ${bridge.mode}, data: ${JSON.stringify(data)}`);
             if (bridge.readOnly) {
+                console.log(`[command] readOnly - ignoring input`);
                 return;
             }
             if (bridge.mode === 'pty') {
+                console.log(`[command] writing to PTY: ${JSON.stringify(data)}`);
                 bridge.ptyProcess.write(data);
                 return;
             }

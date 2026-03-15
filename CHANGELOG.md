@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.21] - 2026-03-15
+
+### Added
+- **Session Sort Controls:** Dropdown selector in Commander view to sort sessions by Created, Activity, or Name.
+- **Stable Session Ordering:** Default sort by "Created" time prevents sessions from jumping around during user interaction.
+- **Multi-Host Session Discovery:** Unified API returns sessions from both HVU (SSH) and WSL (HTTP agent) in single response.
+- **HTTP Agent Bridge:** Python-based HTTP proxy tunnel enables Docker containers to reach WSL tmux agent via HVU port forwarding.
+- **Enhanced Logging:** Debug logging for command input validation and session mode detection.
+
+### Fixed
+- Session reordering issue where active input would cause sessions to jump to top of list.
+- Docker container networking isolation - implemented HTTP proxy bridge for cross-host session access.
+- WSL agent process stability - ensured auto-restart via systemd service.
+
+### Changed
+- Default session sort from "Activity" to "Created" for better UX stability.
+- SSH tunnel configuration now uses structured logging in server.ts.
+
+## [0.1.20] - 2026-03-15
+
+### Added
+- **Multi-Socket Discovery:** SshTmuxProvider now iterates through `/tmp/tmux-*/default` sockets for flexible tmux setup.
+- **HTTP Remote Provider:** HttpRemoteProvider class for REST API-based session discovery from WSL agent.
+- **WSL HTTP Agent:** Node.js HTTP server on WSL port 3001 exposing tmux sessions via `/api/sessions` endpoint.
+- **Old Tmux Compatibility:** Fallback from `-F` format flag to simple `tmux ls` parsing for tmux versions that don't support formatting.
+- **Environment Variable Flexibility:** Support for both monolithic and individual WORK_OS_HOSTS_* environment variables.
+
+### Fixed
+- tmux session list formatting for old tmux versions (HVU).
+- SSH command execution reliability by passing remote commands as single strings.
+- PTY allocation for SSH connections using `-t` flag consistently.
+
 ## [0.1.0] - 2026-03-09
 
 ### Added

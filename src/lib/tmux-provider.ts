@@ -113,6 +113,12 @@ class SshTmuxProvider implements TmuxProvider {
   exec(args: string[]): string {
     // Special handling for 'ls' command: fetch from all tmux sockets
     if (args[0] === 'ls') {
+      // Check if it's the complex formatting command (from sessions API)
+      // If so, use our custom multi-socket handler
+      if (args.length > 2 && args[1] === '-F') {
+        return this.execListAllSocketsWithFormat(args);
+      }
+      // Otherwise just list normally
       return this.execListAllSockets(args);
     }
 
@@ -124,6 +130,87 @@ class SshTmuxProvider implements TmuxProvider {
     const remoteCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
     const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, remoteCmd];
     return execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
+  }
+
+  /**
+   * Execute list-sessions with custom formatting (for newer tmux versions)
+   * Falls back to simple parsing if -F is not supported
+   */
+  private execListAllSocketsWithFormat(args: string[]): string {
+    const formatArg = args[args.length - 1];
+    const escapedFormat = formatArg.replace(/'/g, "'\\''");
+
+    // Try with -F first (for newer tmux)
+    const bashScript = `
+      echo '[DEBUG] Starting format-based search' >&2
+      for sock in /tmp/tmux-*/default; do
+        if [ -S "$sock" ]; then
+          echo '[DEBUG] Trying format for' "$sock" >&2
+          tmux -S "$sock" ls -F '${escapedFormat}' 2>/dev/null || true
+        fi
+      done
+    `.trim();
+
+    const escapedScript = bashScript.replace(/'/g, "'\\''");
+    const remoteCmd = `bash -c "TERM=xterm bash -c '${escapedScript}'"`;
+    const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, remoteCmd];
+
+    console.log(`[SshTmux] Executing format-based list on ${this.hostId}`);
+
+    try {
+      const result = execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      console.log(`[SshTmux] Format result (${result.length} chars):`, result);
+      // If we got good output, return it
+      if (result && !result.includes('unknown option')) {
+        return result;
+      }
+    } catch (error: any) {
+      console.warn(`[SshTmux] Format-based list failed, will use simple fallback`);
+    }
+
+    // Fall back to simple list parsing if -F doesn't work
+    console.log(`[SshTmux] Using simple list parsing fallback`);
+    return this.execListAllSocketsSimple();
+  }
+
+  /**
+   * Execute simple 'tmux ls' and parse the output
+   */
+  private execListAllSocketsSimple(): string {
+    // Try direct tmux ls first - some tmux versions don't support multiple sockets well
+    const simpleCmd = `tmux ls`;
+    const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, simpleCmd];
+
+    console.log(`[SshTmux] Executing simple tmux ls on ${this.hostId}`);
+    console.log(`[SshTmux] Simple cmd:`, cmd);
+
+    try {
+      const output = execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
+      console.log(`[SshTmux] Simple tmux ls output (${output.length} chars):`, output.substring(0, 300));
+
+      // Parse simple tmux ls output (one session per line like "session-name: N windows ...")
+      // Convert to the format expected by the API
+      return output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          // Line format: "session-name: N windows (created ...)"
+          const match = line.match(/^([^:]+):\s+(\d+)\s+windows?/);
+          if (!match) {
+            console.log(`[SshTmux] Line did not match pattern:`, line);
+            return '';
+          }
+          const [, name] = match;
+          // Return in __WORKOS__ delimited format
+          // name__WORKOS__created__WORKOS__attached__WORKOS__command__WORKOS__directory__WORKOS__role__WORKOS__instructionPath
+          const created = Math.floor(Date.now() / 1000).toString(); // Use current time as placeholder
+          return `${name}__WORKOS__${created}__WORKOS__0__WORKOS____WORKOS____WORKOS____WORKOS__`;
+        })
+        .join('\n');
+    } catch (error: any) {
+      console.error(`[SshTmux] Simple list failed:`, error.message, error.stderr?.toString());
+      throw error;
+    }
   }
 
   /**
@@ -140,28 +227,57 @@ class SshTmuxProvider implements TmuxProvider {
     // 2. Lists sessions from each socket
     // 3. Aggregates results
     const bashScript = `
+      echo '[DEBUG] Starting multi-socket search' >&2
       for sock in /tmp/tmux-*/default; do
+        echo '[DEBUG] Checking socket:' "$sock" >&2
         if [ -S "$sock" ]; then
-          tmux -S "$sock" ls -F '${escapedFormat}' 2>/dev/null || true
+          echo '[DEBUG] Found socket:' "$sock" >&2
+          tmux -S "$sock" ls -F '${escapedFormat}' 2>&1 || true
+        else
+          echo '[DEBUG] Not a socket:' "$sock" >&2
         fi
       done
+      echo '[DEBUG] Multi-socket search complete' >&2
     `.trim();
 
     const escapedScript = bashScript.replace(/'/g, "'\\''");
     const remoteCmd = `bash -c "TERM=xterm bash -c '${escapedScript}'"`;
     const cmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, remoteCmd];
 
+    console.log(`[SshTmux] Executing multi-socket list on ${this.hostId}`);
+    console.log(`[SshTmux] SSH target: ${this.sshTarget}`);
+    console.log(`[SshTmux] Bash script:`, bashScript.substring(0, 300));
+    console.log(`[SshTmux] Remote command:`, remoteCmd.substring(0, 400));
+    console.log(`[SshTmux] SSH cmd args:`, cmd);
+
     try {
-      return execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8' }).trim();
+      const result = execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      console.log(`[SshTmux] Got result (${result.length} chars):`, result.substring(0, 500));
+      return result;
     } catch (error: any) {
       // If multi-socket approach fails, fall back to single socket
-      console.warn(`[tmux-provider] multi-socket list failed, falling back to single socket`);
+      console.error(`[SshTmux] multi-socket list EXCEPTION:`, {
+        message: error.message,
+        code: error.code,
+        signal: error.signal,
+        status: error.status,
+        stderr: error.stderr?.toString(),
+        stdout: error.stdout?.toString(),
+      });
+      console.warn(`[SshTmux] Falling back to single socket: ${this.socketPath}`);
       const tmuxArgs = ['tmux', '-S', this.socketPath, ...args]
         .map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
         .join(' ');
       const fallbackCmd = `bash -c "TERM=xterm ${tmuxArgs}"`;
       const fallbackExecCmd = ['ssh', ...this.sshOpts, ...this.sshExtraOpts, this.sshTarget, fallbackCmd];
-      return execFileSync(fallbackExecCmd[0], fallbackExecCmd.slice(1), { encoding: 'utf-8' }).trim();
+      try {
+        const fallbackResult = execFileSync(fallbackExecCmd[0], fallbackExecCmd.slice(1), { encoding: 'utf-8' }).trim();
+        console.log(`[SshTmux] Fallback result (${fallbackResult.length} chars):`, fallbackResult.substring(0, 300));
+        return fallbackResult;
+      } catch (fallbackError: any) {
+        console.error(`[SshTmux] Fallback also failed:`, fallbackError.message);
+        throw fallbackError;
+      }
     }
   }
 
@@ -438,37 +554,65 @@ export function resetTmuxProvider(): void {
 export function buildSessionPool(): MultiHostSessionPool {
   if (_pool) return _pool;
 
+  let hostsConfig: any[] = [];
+
+  // Try parsing WORK_OS_HOSTS (single JSON array)
   const hostsEnv = process.env.WORK_OS_HOSTS;
   if (hostsEnv) {
     try {
-      const hostsConfig = JSON.parse(hostsEnv);
-      const providers: TmuxProvider[] = [];
-
-      for (const config of hostsConfig) {
-        if (config.type === 'local') {
-          if (config.socketPath) {
-            providers.push(new ExplicitSocketProvider(config.socketPath));
-          } else {
-            providers.push(resolveTmuxProvider());
-          }
-        } else if (config.type === 'ssh') {
-          providers.push(
-            new SshTmuxProvider(config.hostId, config.displayName, config.sshTarget, config.socketPath)
-          );
-        } else if (config.type === 'http') {
-          providers.push(
-            new HttpRemoteProvider(config.hostId, config.displayName, config.agentUrl)
-          );
-        }
-      }
-
-      if (providers.length > 0) {
-        _pool = new MultiHostSessionPool(providers);
-        console.log(`[tmux-pool] initialized with ${providers.length} host(s)`);
-        return _pool;
-      }
+      hostsConfig = JSON.parse(hostsEnv);
     } catch (error) {
       console.warn('[tmux-pool] failed to parse WORK_OS_HOSTS:', error instanceof Error ? error.message : error);
+    }
+  }
+
+  // Fallback: try individual WORK_OS_HOSTS_* env vars
+  if (hostsConfig.length === 0) {
+    if (process.env.WORK_OS_HOSTS_HVU) {
+      try {
+        hostsConfig.push(JSON.parse(process.env.WORK_OS_HOSTS_HVU));
+      } catch (e) {
+        console.warn('[tmux-pool] failed to parse WORK_OS_HOSTS_HVU');
+      }
+    }
+    if (process.env.WORK_OS_HOSTS_WSL) {
+      try {
+        hostsConfig.push(JSON.parse(process.env.WORK_OS_HOSTS_WSL));
+      } catch (e) {
+        console.warn('[tmux-pool] failed to parse WORK_OS_HOSTS_WSL');
+      }
+    }
+  }
+
+  // Build providers from config
+  if (hostsConfig.length > 0) {
+    const providers: TmuxProvider[] = [];
+
+    for (const config of hostsConfig) {
+      console.log(`[tmux-pool] Processing config:`, JSON.stringify(config));
+      if (config.type === 'local') {
+        if (config.socketPath) {
+          providers.push(new ExplicitSocketProvider(config.socketPath));
+        } else {
+          providers.push(resolveTmuxProvider());
+        }
+      } else if (config.type === 'ssh') {
+        console.log(`[tmux-pool] Creating SshTmuxProvider: hostId=${config.hostId}, sshTarget=${config.sshTarget}`);
+        providers.push(
+          new SshTmuxProvider(config.hostId, config.displayName, config.sshTarget, config.socketPath)
+        );
+      } else if (config.type === 'http') {
+        console.log(`[tmux-pool] Creating HttpRemoteProvider: hostId=${config.hostId}, agentUrl=${config.agentUrl}`);
+        providers.push(
+          new HttpRemoteProvider(config.hostId, config.displayName, config.agentUrl)
+        );
+      }
+    }
+
+    if (providers.length > 0) {
+      _pool = new MultiHostSessionPool(providers);
+      console.log(`[tmux-pool] initialized with ${providers.length} host(s):`, providers.map(p => `${p.hostId}(${p.displayName})`).join(', '));
+      return _pool;
     }
   }
 

@@ -40,7 +40,7 @@ interface Template {
 
 const translations = {
   ja: {
-    title: 'Work OS v0.8.13',
+    title: 'Work OS v0.1.21',
     richMode: 'リッチ表示 (色)',
     help: 'ヘルプ',
     commander: '司令塔: 全セッション監視',
@@ -105,7 +105,7 @@ const translations = {
     copied: 'Copied',
   },
   en: {
-    title: 'Work OS v0.8.13',
+    title: 'Work OS v0.1.21',
     richMode: 'Rich UI (Color)',
     help: 'Help',
     commander: 'Commander: Global Monitor',
@@ -209,6 +209,7 @@ export default function Home() {
   const [clientActionKey, setClientActionKey] = useState<string | null>(null);
   const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
   const [clientSort, setClientSort] = useState<'activity' | 'created' | 'name'>('activity');
+  const [sessionSort, setSessionSort] = useState<'activity' | 'created' | 'name'>('created');
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
@@ -270,7 +271,14 @@ export default function Home() {
   };
   const getSortScore = (session: Session) => {
     const waitingBoost = session.isWaitingForInput ? 10 ** 12 : 0;
-    return waitingBoost + (session.lastActivity || 0);
+    if (sessionSort === 'activity') {
+      return waitingBoost + (session.lastActivity || 0);
+    }
+    if (sessionSort === 'created') {
+      return waitingBoost + 0; // No activity-based sorting
+    }
+    // name sort handled separately
+    return 0;
   };
   const copyPath = async (sessionId: string, value?: string) => {
     if (!value) {
@@ -542,10 +550,23 @@ export default function Home() {
   }, [clientsDialog?.sessionId]);
 
   const topLevelSessions = [...sessions.filter((s) => !s.name.startsWith('sh-'))].sort((a, b) => {
-    const scoreDiff = getSortScore(b) - getSortScore(a);
-    if (scoreDiff !== 0) {
-      return scoreDiff;
+    // Sort by waiting status first
+    const aWaiting = a.isWaitingForInput ? 1 : 0;
+    const bWaiting = b.isWaitingForInput ? 1 : 0;
+    if (aWaiting !== bWaiting) {
+      return bWaiting - aWaiting;
     }
+
+    // Then sort by selected method
+    if (sessionSort === 'activity') {
+      const scoreDiff = (b.lastActivity || 0) - (a.lastActivity || 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+    } else if (sessionSort === 'name') {
+      return a.name.localeCompare(b.name);
+    }
+    // 'created' or fallback: sort by name
     return a.name.localeCompare(b.name);
   });
 
@@ -561,10 +582,23 @@ export default function Home() {
   }, {} as Record<string, { hostId: string; hostName: string; sessions: Session[] }>);
 
   const commanderSessions = [...sessions].sort((a, b) => {
-    const scoreDiff = getSortScore(b) - getSortScore(a);
-    if (scoreDiff !== 0) {
-      return scoreDiff;
+    // Sort by waiting status first
+    const aWaiting = a.isWaitingForInput ? 1 : 0;
+    const bWaiting = b.isWaitingForInput ? 1 : 0;
+    if (aWaiting !== bWaiting) {
+      return bWaiting - aWaiting;
     }
+
+    // Then sort by selected method
+    if (sessionSort === 'activity') {
+      const scoreDiff = (b.lastActivity || 0) - (a.lastActivity || 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+    } else if (sessionSort === 'name') {
+      return a.name.localeCompare(b.name);
+    }
+    // 'created' or fallback: sort by name
     return a.name.localeCompare(b.name);
   });
 
@@ -614,6 +648,11 @@ export default function Home() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ fontSize: '0.9rem', margin: 0, color: 'var(--accent)' }}>{t.commander}</h2>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: '0.75rem', color: '#888' }}>
+            <select value={sessionSort} onChange={(e) => setSessionSort(e.target.value as 'activity' | 'created' | 'name')} style={{ background: '#000', color: '#fff', border: '1px solid #333', padding: '0.3rem', borderRadius: '4px', fontSize: '0.75rem' }}>
+              <option value="created">{t.sort}: {t.byCreated}</option>
+              <option value="activity">{t.sort}: {t.byActivity}</option>
+              <option value="name">{t.sort}: {t.byName}</option>
+            </select>
             <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><input type="checkbox" checked={showDashPreview} onChange={(e) => setShowDashPreview(e.target.checked)} /> {t.showPreview}</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>{t.previewLines}: <input type="number" value={dashPreviewLines} onChange={(e) => setDashPreviewLines(parseInt(e.target.value) || 1)} style={{ width: '40px', background: '#000', color: '#fff', border: '1px solid #333', textAlign: 'center' }} /></div>
           </div>
