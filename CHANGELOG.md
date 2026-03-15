@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [0.1.21] - 2026-03-15
 
 ### Added
+- **Commander Agent Integration:** Attach autonomous "commander" sessions to target sessions for automatic prompt response
+  - Auto-detect and respond to (y/n) and numbered selection prompts
+  - 5-second polling interval with configurable response patterns
+  - REST API for enable/disable auto-accept functionality
+  - Session badges showing commander/target relationships
+  - Modal UI for creating commander sessions with template selection
+- **Session Store:** Manage commander↔target session relationships with metadata tracking
+- **Auto-Accept Manager:** Polls target sessions and auto-responds to prompts without user intervention
+- **Session Metadata Extension:** API now includes `sessionRole` and `linkedSessionId` fields for session linking
+- **Documentation:** Complete user guide and API reference for Commander Agent feature
 - **Session Sort Controls:** Dropdown selector in Commander view to sort sessions by Created, Activity, or Name.
 - **Stable Session Ordering:** Default sort by "Created" time prevents sessions from jumping around during user interaction.
 - **Multi-Host Session Discovery:** Unified API returns sessions from both HVU (SSH) and WSL (HTTP agent) in single response.
