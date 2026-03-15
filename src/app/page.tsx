@@ -31,6 +31,8 @@ interface Session {
   lastLine?: string;
   content?: string;
   summary?: string;
+  sessionRole?: 'commander' | 'target' | 'regular';
+  linkedSessionId?: string;
 }
 
 interface Template {
@@ -103,6 +105,13 @@ const translations = {
     clientsCount: 'Clients',
     copy: 'Copy',
     copied: 'Copied',
+    addCommander: '⚔️ 司令官を追加',
+    commanderTemplate: 'テンプレート',
+    commanderName: '司令官名',
+    commanderLaunch: '起動',
+    autoAccept: '自動承認',
+    watchedBy: '監視中: ',
+    commanderBadge: '⚔️ Commander',
   },
   en: {
     title: 'Work OS v0.1.21',
@@ -168,6 +177,13 @@ const translations = {
     clientsCount: 'Clients',
     copy: 'Copy',
     copied: 'Copied',
+    addCommander: '⚔️ Add Commander',
+    commanderTemplate: 'Template',
+    commanderName: 'Commander Name',
+    commanderLaunch: 'Launch',
+    autoAccept: 'Auto-Accept',
+    watchedBy: 'Watched by: ',
+    commanderBadge: '⚔️ Commander',
   }
 };
 
@@ -210,6 +226,8 @@ export default function Home() {
   const [copiedPathId, setCopiedPathId] = useState<string | null>(null);
   const [clientSort, setClientSort] = useState<'activity' | 'created' | 'name'>('activity');
   const [sessionSort, setSessionSort] = useState<'activity' | 'created' | 'name'>('created');
+  const [commanderModal, setCommanderModal] = useState<{ targetSessionId: string } | null>(null);
+  const [autoAcceptStatus, setAutoAcceptStatus] = useState<Record<string, boolean>>({});
 
   const t = translations[lang];
   const lastPromptedState = useRef<Record<string, string>>({});
@@ -481,6 +499,55 @@ export default function Home() {
     }
   };
 
+  const openCommanderModal = (targetSessionId: string) => {
+    setCommanderModal({ targetSessionId });
+  };
+
+  const startCommander = async (commanderName: string, template: string, targetSessionId: string) => {
+    if (!commanderName) return;
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: commanderName,
+          command: 'bash',
+          cwd: process.cwd(),
+          templateName: template || undefined,
+          sessionRole: 'commander',
+          linkedSessionId: targetSessionId,
+        }),
+      });
+      const data = await res.json();
+      if (data.compositeId) {
+        // Enable auto-accept for the commander
+        await toggleAutoAccept(data.compositeId, true, targetSessionId);
+      }
+      setCommanderModal(null);
+      fetchSessions();
+    } catch (error) {
+      console.error('Failed to start commander session', error);
+    }
+  };
+
+  const toggleAutoAccept = async (commanderSessionId: string, enabled: boolean, targetSessionId?: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${commanderSessionId}/auto-accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled,
+          targetSessionId: targetSessionId || autoAcceptStatus[commanderSessionId] ? undefined : targetSessionId,
+        }),
+      });
+      if (res.ok) {
+        setAutoAcceptStatus(prev => ({ ...prev, [commanderSessionId]: enabled }));
+      }
+    } catch (error) {
+      console.error('Failed to toggle auto-accept', error);
+    }
+  };
+
   const loadClientsDialog = async (id: string) => {
     setClientsLoading(id);
     try {
@@ -728,7 +795,15 @@ export default function Home() {
             <div key={session.id} style={{ display: 'contents' }}>
               <div id={`card-${session.id}`} className="session-card" style={{ opacity: sendingStatus[session.id] ? 0.7 : 1, transition: 'opacity 0.2s', border: session.isWaitingForInput ? '1px solid #ffeb3b' : '1px solid var(--card-border)' }}>
                 <div className="session-header">
-                  <span className="session-name">{session.name} {session.isWaitingForInput && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ffeb3b' }}>⚡ INPUT WAITING</span>} {sendingStatus[session.id] && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: 'var(--accent)' }}>{t.sending}</span>} {orchStatus[session.id] && !isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#00d1b2' }}>{t.orchestrating}</span>} {isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ff4444' }}>{t.userPriority}</span>}</span>
+                  <span className="session-name">
+                    {session.name}
+                    {session.sessionRole === 'commander' && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ffa500', background: 'rgba(255, 165, 0, 0.15)', border: '1px solid #664400', padding: '0.08rem 0.45rem', borderRadius: '999px' }}>{t.commanderBadge}</span>}
+                    {session.sessionRole === 'target' && session.linkedSessionId && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#00d1b2', background: 'rgba(0, 209, 178, 0.15)', border: '1px solid #1a4d45', padding: '0.08rem 0.45rem', borderRadius: '999px' }}>🎯 {t.watchedBy}{session.linkedSessionId.split(':')[1]}</span>}
+                    {session.isWaitingForInput && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ffeb3b' }}>⚡ INPUT WAITING</span>}
+                    {sendingStatus[session.id] && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: 'var(--accent)' }}>{t.sending}</span>}
+                    {orchStatus[session.id] && !isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#00d1b2' }}>{t.orchestrating}</span>}
+                    {isInterrupted && <span style={{ marginLeft: '10px', fontSize: '0.7rem', color: '#ff4444' }}>{t.userPriority}</span>}
+                  </span>
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <select value={proxyMap[session.id] || ''} onChange={(e) => setProxyMap({ ...proxyMap, [session.id]: e.target.value })} style={{ background: '#000', color: '#aaa', border: '1px solid #333', fontSize: '0.7rem', padding: '0.1rem', borderRadius: '4px' }}>
                       <option value="">🤝 {t.noProxy}</option>
@@ -810,6 +885,7 @@ export default function Home() {
                     </button>
                     <button onClick={() => window.open(`/api/sessions/${session.id}`, '_blank')} style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px solid #333', fontSize: '0.7rem' }}>Raw</button>
                     <button onClick={() => enterShell(session.id)} style={{ background: 'transparent', color: 'var(--accent)', border: '1px solid #2d4a4a', fontSize: '0.7rem' }}>🐚 Shell</button>
+                    <button onClick={() => openCommanderModal(session.id)} style={{ background: 'transparent', color: '#ffa500', border: '1px solid #664400', fontSize: '0.7rem' }}>{t.addCommander}</button>
                     <button onClick={() => killSession(session.id)} style={{ background: 'transparent', color: '#ff4444', border: '1px solid #442222', fontSize: '0.7rem' }}>Kill</button>
                   </div>
                 </div>
@@ -893,6 +969,125 @@ export default function Home() {
           </div>
         ))}
       </div>
+
+      {commanderModal ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+            zIndex: 1000,
+          }}
+          onClick={() => setCommanderModal(null)}
+        >
+          <div
+            style={{
+              width: 'min(500px, 100%)',
+              background: '#0b121d',
+              border: '1px solid #23374c',
+              borderRadius: '16px',
+              boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+              padding: '1.5rem',
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ color: '#ffa500', fontSize: '0.9rem', fontWeight: 600 }}>⚔️ {t.addCommander}</div>
+              <div style={{ color: '#fff', fontWeight: 700, marginTop: '0.25rem' }}>Target: {commanderModal.targetSessionId}</div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div>
+                <label style={{ color: '#9ecbff', fontSize: '0.8rem', display: 'block', marginBottom: '0.4rem' }}>{t.commanderName}</label>
+                <input
+                  type="text"
+                  placeholder="e.g., commander-1"
+                  defaultValue={`commander-${commanderModal.targetSessionId.split(':')[1] || 'target'}`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const input = e.target as HTMLInputElement;
+                      const template = (document.getElementById('commander-template') as HTMLSelectElement)?.value || '';
+                      startCommander(input.value, template, commanderModal.targetSessionId);
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '0.4rem',
+                    background: '#08111f',
+                    border: '1px solid #334155',
+                    color: '#fff',
+                    fontSize: '0.85rem',
+                    borderRadius: '4px',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ color: '#9ecbff', fontSize: '0.8rem', display: 'block', marginBottom: '0.4rem' }}>{t.commanderTemplate}</label>
+                <select
+                  id="commander-template"
+                  defaultValue=""
+                  style={{
+                    width: '100%',
+                    padding: '0.4rem',
+                    background: '#08111f',
+                    border: '1px solid #334155',
+                    color: '#fff',
+                    fontSize: '0.85rem',
+                    borderRadius: '4px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <option value="">None</option>
+                  {templates.filter((t) => t.name.toLowerCase().includes('commander') || t.name.toLowerCase().includes('boss')).map((t) => (
+                    <option key={t.name} value={t.name}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setCommanderModal(null)}
+                style={{
+                  background: 'transparent',
+                  color: '#9ecbff',
+                  border: '1px solid #23374c',
+                  padding: '0.4rem 1rem',
+                  fontSize: '0.8rem',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.close}
+              </button>
+              <button
+                onClick={() => {
+                  const input = document.querySelector('[placeholder="e.g., commander-1"]') as HTMLInputElement;
+                  const template = (document.getElementById('commander-template') as HTMLSelectElement)?.value || '';
+                  startCommander(input?.value || '', template, commanderModal.targetSessionId);
+                }}
+                style={{
+                  background: 'rgba(255, 165, 0, 0.15)',
+                  color: '#ffa500',
+                  border: '1px solid #664400',
+                  padding: '0.4rem 1rem',
+                  fontSize: '0.8rem',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.commanderLaunch}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {clientsDialog ? (
         <div

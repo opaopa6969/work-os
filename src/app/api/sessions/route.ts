@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs-extra';
 import path from 'path';
 import { buildSessionPool } from '@/lib/tmux-provider';
+import { sessionStore } from '@/lib/session-store';
 
 const USER_TEMPLATES_DIR = path.join(process.cwd(), 'templates/user');
 const DEFAULT_TEMPLATES_DIR = path.join(process.cwd(), 'templates/defaults');
@@ -158,6 +159,7 @@ export async function GET() {
                     ? 'attach'
                     : 'mirror';
               const compositeId = `${provider.hostId}:${name}`;
+              const metadata = sessionStore.getMetadata(compositeId);
               return {
                 id: compositeId,
                 name,
@@ -174,6 +176,9 @@ export async function GET() {
                 clientCount,
                 lastActivity,
                 suggestedMode,
+                // Commander agent fields
+                sessionRole: metadata.role,
+                linkedSessionId: metadata.linkedSessionId,
               };
             })
         );
@@ -200,7 +205,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const pool = buildSessionPool();
   try {
-    const { name, command, cwd, templateName, hostId = 'local' } = await request.json();
+    const { name, command, cwd, templateName, hostId = 'local', linkedSessionId, sessionRole } = await request.json();
 
     if (!name || !command || !cwd) {
       return NextResponse.json(
@@ -243,6 +248,19 @@ export async function POST(request: Request) {
     provider.exec(['set-option', '-t', sessionName, '@workos_instruction_path', runtimeInstruction ? runtimeInstruction.instructionPath : '']);
 
     const compositeId = `${provider.hostId}:${sessionName}`;
+
+    // Handle session linking for commander sessions
+    if (sessionRole && linkedSessionId) {
+      if (sessionRole === 'commander') {
+        sessionStore.linkCommander(compositeId, linkedSessionId);
+      } else if (sessionRole === 'target') {
+        sessionStore.setMetadata(compositeId, {
+          role: 'target',
+          linkedSessionId,
+        });
+      }
+    }
+
     return NextResponse.json({
       message: `Session ${sessionName} started on ${provider.displayName}`,
       compositeId,
@@ -251,6 +269,8 @@ export async function POST(request: Request) {
       cwd,
       command: finalCommand,
       instructionPath: runtimeInstruction?.instructionPath ?? null,
+      sessionRole: sessionRole || undefined,
+      linkedSessionId: linkedSessionId || undefined,
     });
   } catch (error: any) {
     return NextResponse.json(
