@@ -20,6 +20,7 @@ Work OS is a browser-based tmux operations console for running and supervising l
 - **Multi-Host Session Management:** Aggregates tmux sessions from multiple hosts (HVU via SSH, WSL via HTTP agent)
 - **Session Sort Controls:** Sort sessions by creation time, activity, or name for organized workflow
 - **HTTP Agent Bridge:** Enables Docker containers to communicate with remote tmux agents via REST API
+- **Commander Agent:** Attach a "commander" session to any target session to auto-respond to (y/n) and numbered prompts
 
 ### How To Use
 
@@ -52,6 +53,22 @@ The Docker container mounts:
 - `/mnt/c/var:/mnt/c/var`
 
 This is the critical point: the container does not run an isolated tmux server. It connects to the host tmux socket, so browser sessions can inspect and interact with the host machine's tmux sessions.
+
+#### Commander Agent
+
+The Commander Agent feature allows automatic responses to prompts in target sessions:
+
+1. Click **[⚔️ Add Commander]** on any session card
+2. Enter a commander name and optionally select a template
+3. Click **Launch** to create the commander session
+4. The commander automatically monitors the target session
+5. When a prompt appears (`y/n` or numbered selection), the commander auto-responds
+6. The user can override auto-responses by typing in the commander session
+
+**Use cases:**
+- Automatically approve permission prompts during long-running operations
+- Handle Claude Code file editing confirmations
+- Automate routine yes/no decisions in CI/CD workflows
 
 ### tmux Model
 
@@ -90,6 +107,15 @@ Session flow:
    - mirrors screen content with tmux capture output.
 4. Session actions such as `send-key`, `kill`, `shell`, and `clients` are handled through Next.js API routes.
 
+Commander Agent flow:
+
+1. User creates a commander session linked to a target session
+2. `SessionStore` registers the commander↔target relationship
+3. `AutoAcceptManager` starts polling the target session every 5 seconds
+4. When a prompt is detected (y/n pattern, numbered selection, shell prompt), the manager auto-sends the appropriate key
+5. User can override by typing in the commander session (sets 30-second interrupt timer)
+6. When either session ends, timers are cleaned up
+
 ### Notes
 
 - Docker access depends on the host tmux socket path matching `TMUX_SOCKET=/tmp/tmux-1000/default`
@@ -116,6 +142,9 @@ Work OS は、ローカルホスト上の tmux セッションをブラウザか
 - `tmux list-clients` を見て detach / kill を実行
 - コマンド、ディレクトリ、template を指定して agent session を起動
 - 同じ作業ディレクトリで child shell を追加起動
+- **マルチホストセッション管理:** SSH（HVU経由）、HTTP agent（WSL経由）など複数ホストの tmux セッションを集約
+- **セッションソート:** 作成日時、アクティビティ、名前でセッションをソート
+- **司令官Agent:** ターゲットセッションに「司令官」セッションをアタッチして、(y/n) や番号選択プロンプトに自動応答
 
 ### 使い方
 
@@ -148,6 +177,22 @@ Docker コンテナは以下を mount します。
 - `/mnt/c/var:/mnt/c/var`
 
 ここが重要です。コンテナ内で独立した tmux を動かしているのではなく、ホストの tmux socket に接続します。つまり Web から見える session は、ホストマシン上の tmux session です。
+
+#### 司令官Agent
+
+司令官Agent 機能を使うと、ターゲットセッション内のプロンプトに自動応答できます：
+
+1. セッションカードの **[⚔️ 司令官を追加]** をクリック
+2. 司令官の名前を入力し、必要に応じてテンプレートを選択
+3. **起動** をクリックして司令官セッションを作成
+4. 司令官が自動的にターゲットセッションを監視開始
+5. プロンプト（y/n または番号選択）が出現すると、司令官が自動応答
+6. ユーザーは司令官セッションに入力することで、自動応答を上書き可能
+
+**使用例：**
+- 長時間実行中の操作での権限確認プロンプトを自動承認
+- Claude Code のファイル編集確認を処理
+- CI/CD ワークフローのルーチンな yes/no 判定を自動化
 
 ### tmux まわり
 
@@ -186,6 +231,15 @@ Work OS はホスト tmux server を前提に動きます。
    - tmux capture 出力を mirror するか
    を切り替える
 4. `send-key`, `kill`, `shell`, `clients` などの操作は Next.js API route で処理する
+
+司令官Agent の流れ:
+
+1. ユーザーがターゲットセッションにリンクされた司令官セッションを作成
+2. `SessionStore` が司令官↔ターゲット関係を登録
+3. `AutoAcceptManager` が5秒ごとにターゲットセッションをポーリング開始
+4. プロンプト（y/n パターン、番号選択、シェルプロンプト）が検出されると、適切なキーを自動送信
+5. ユーザーが司令官セッションに入力すると、自動応答をオーバーライド可能（30秒の割込みタイマー設定）
+6. いずれかのセッションが終了すると、タイマーはクリーンアップされる
 
 ### 注意点
 
