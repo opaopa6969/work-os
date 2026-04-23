@@ -1,6 +1,6 @@
 # Work OS — システム仕様書 (SPEC.md)
 
-バージョン: v0.1.21  
+バージョン: v0.1.22  
 作成日: 2026-04-19  
 対象リポジトリ: opaopa6969/work-os
 
@@ -52,6 +52,64 @@ tmux sessions (local / SSH / WSL)
 2. `app.prepare()` (Next.js) が完了後、Express server + socket.io が起動
 3. `buildSessionPool()` が環境変数 `WORK_OS_HOSTS` を読み込み、プロバイダを初期化
 4. ポート `PORT`（デフォルト 4000、本番では 3000/5000）で `0.0.0.0` リッスン
+
+### 1.3 マルチホスト アーキテクチャ図
+
+```mermaid
+graph TB
+    subgraph Browser["Browser (xterm.js + React)"]
+        UI[Dashboard / Terminal UI]
+    end
+
+    subgraph Server["Node.js Server Process"]
+        NJ[Next.js 16 App Router]
+        EX[Express 5]
+        SIO[socket.io Server]
+        POOL[MultiHostSessionPool]
+
+        EX --> NJ
+        EX --> SIO
+        SIO --> POOL
+        NJ --> POOL
+    end
+
+    subgraph LocalHost["Local Host"]
+        PTY1[PtyBridge\nnode-pty]
+        MIR1[MirrorBridge\ncapture-pane]
+        TMUX1[tmux sessions\nlocal socket]
+        PTY1 --> TMUX1
+        MIR1 --> TMUX1
+    end
+
+    subgraph SSHHost["SSH Remote Host"]
+        PTY2[PtyBridge\nssh -t tmux]
+        MIR2[MirrorBridge\nssh tmux capture-pane]
+        TMUX2[tmux sessions\nremote socket]
+        PTY2 --> TMUX2
+        MIR2 --> TMUX2
+    end
+
+    subgraph HTTPAgent["HTTP Agent Host"]
+        RWSB[RemoteWebSocketBridge\nsocket.io-client]
+        AGT[Work OS Agent\nnpm run dev:agent]
+        RWSB -->|WebSocket| AGT
+    end
+
+    subgraph CFTunnel["Cloudflare Tunnel"]
+        CF[cloudflared\ntunnel run]
+    end
+
+    UI <-->|WebSocket socket.io| SIO
+    UI <-->|HTTP REST| EX
+
+    POOL -->|local provider| PTY1
+    POOL -->|local provider| MIR1
+    POOL -->|ssh provider| PTY2
+    POOL -->|ssh provider| MIR2
+    POOL -->|http provider| RWSB
+
+    CF -->|:3000| EX
+```
 
 ---
 
@@ -195,7 +253,48 @@ detachSocket(socket.id)
       └─pty → ブリッジは残存 (他ソケットが接続中の可能性)
 ```
 
-### 4.3 セッションモード自動判定ロジック
+### 4.3 TerminalStatus / Bridge ライフサイクル (stateDiagram-v2)
+
+```mermaid
+stateDiagram-v2
+    direction TB
+
+    state "TerminalStatus (UI)" as TS {
+        [*] --> idle
+        idle --> connecting : socket.connect()
+        connecting --> ready : terminal:status ready
+        connecting --> error : terminal:error / connect_error
+        ready --> disconnected : socket disconnect / session-exit
+        error --> idle : retry
+        disconnected --> idle : reconnect
+    }
+
+    state "Bridge Lifecycle (Server)" as BL {
+        [*] --> init : start イベント受信
+        init --> resolving : compositeId 解決
+        resolving --> pty_bridge : mode=pty (PtyBridge)
+        resolving --> mirror_bridge : mode=mirror (MirrorBridge)
+        resolving --> remote_bridge : HttpRemoteProvider (RemoteWebSocketBridge)
+
+        pty_bridge --> pty_active : node-pty spawn 成功
+        pty_active --> pty_active : onData → output broadcast
+        pty_active --> destroyed_pty : onExit → session-exit
+
+        mirror_bridge --> mirror_polling : setInterval 400ms
+        mirror_polling --> mirror_polling : capture-pane → terminal:snapshot
+        mirror_polling --> destroyed_mirror : sockets.size == 0
+
+        remote_bridge --> remote_active : remoteSocket 接続
+        remote_active --> remote_active : output / terminal:status proxy
+        remote_active --> destroyed_remote : sockets.size == 0
+
+        destroyed_pty --> [*]
+        destroyed_mirror --> [*]
+        destroyed_remote --> [*]
+    }
+```
+
+### 4.4 セッションモード自動判定ロジック
 
 ```
 getSessionInfo(provider, sessionName, preferredMode):
@@ -307,7 +406,51 @@ selectKey:
   default → 'y\n'
 ```
 
-### 5.8 SessionStore
+### 5.8 Commander Agent Auto-Accept シーケンス図
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as Dashboard (Browser)
+    participant API as Express API
+    participant AAM as AutoAcceptManager
+    participant Pool as MultiHostSessionPool
+    participant Target as Target tmux Session
+    participant Commander as Commander tmux Session
+
+    User->>UI: [Commander] ボタンクリック
+    UI->>API: POST /api/sessions\n{ sessionRole: 'commander', linkedSessionId }
+    API->>Pool: newSession(commander, template=commander)
+    Pool-->>API: commanderSessionId
+    API->>AAM: start(commanderSessionId, targetSessionId)
+    AAM-->>API: polling timer registered
+    API-->>UI: 201 Created { id: commanderSessionId }
+    UI-->>User: Commander バッジ表示
+
+    loop every 5 seconds
+        AAM->>Pool: capturePane(targetSessionId)
+        Pool->>Target: tmux capture-pane -a -e -J -p
+        Target-->>Pool: pane content
+        Pool-->>AAM: content string
+
+        alt isWaitingForInput == true
+            AAM->>AAM: selectKey(content)\n→ '1\n' or 'y\n'
+            AAM->>Pool: sendKeys(targetSessionId, key)
+            Pool->>Target: tmux send-keys
+            Target-->>Commander: (response logged)
+        else no prompt detected
+            AAM->>AAM: skip
+        end
+    end
+
+    User->>UI: Auto-Accept OFF
+    UI->>API: POST /api/sessions/:id/auto-accept { enabled: false }
+    API->>AAM: stop(commanderSessionId)
+    AAM-->>API: timer cleared
+```
+
+### 5.9 SessionStore
 
 `src/lib/session-store.ts` に実装。Commander/Target セッションペアをインメモリで管理するシングルトン。
 
@@ -320,6 +463,91 @@ interface SessionMetadata {
 sessionStore.linkCommander(commanderId, targetId)
 sessionStore.unlinkCommander(commanderId)
 sessionStore.getAllLinks(): { commander, target }[]
+```
+
+### 5.10 Bridge クラス図
+
+```mermaid
+classDiagram
+    direction TB
+
+    class Bridge {
+        <<interface>>
+        +type: 'pty' | 'mirror' | 'remote-websocket'
+        +sockets: Set~Socket~
+        +addSocket(socket: Socket) void
+        +detachSocket(socketId: string) void
+        +destroy() void
+    }
+
+    class PtyBridge {
+        +type: 'pty'
+        +sockets: Set~Socket~
+        +pty: IPty
+        +sessionId: string
+        +resizeStrategy: 'pty-only' | 'tmux-window'
+        +addSocket(socket: Socket) void
+        +detachSocket(socketId: string) void
+        +resize(cols: number, rows: number) void
+        +write(data: string) void
+        +destroy() void
+        -onData(data: string) void
+        -onExit(code: number, signal: number) void
+    }
+
+    class MirrorBridge {
+        +type: 'mirror'
+        +sockets: Set~Socket~
+        +sessionId: string
+        +provider: TmuxProvider
+        -timer: NodeJS.Timeout
+        -lastSnapshot: string
+        +addSocket(socket: Socket) void
+        +detachSocket(socketId: string) void
+        +destroy() void
+        -poll() Promise~void~
+        -broadcastSnapshot(data: string) void
+    }
+
+    class RemoteWebSocketBridge {
+        +type: 'remote-websocket'
+        +sockets: Set~Socket~
+        +sessionId: string
+        +agentUrl: string
+        -remoteSocket: SocketIOClient
+        +addSocket(socket: Socket) void
+        +detachSocket(socketId: string) void
+        +destroy() void
+        -proxyEvent(event: string, ...args: any[]) void
+    }
+
+    class MultiHostSessionPool {
+        +providers: Map~string, TmuxProvider~
+        +resolve(compositeId: string) ProviderResolution
+        +listAll(executor?: Function) HostSessions[]
+        +getProvider(hostId: string) TmuxProvider
+        +getAllProviders() TmuxProvider[]
+    }
+
+    class TmuxProvider {
+        <<interface>>
+        +hostId: string
+        +displayName: string
+        +exec(args: string[]) Promise~string~
+        +listSessions() Promise~Session[]~
+        +newSession(opts: NewSessionOpts) Promise~string~
+        +killSession(name: string) Promise~void~
+        +capturePane(name: string) Promise~string~
+        +sendKeys(name: string, keys: string) Promise~void~
+    }
+
+    Bridge <|.. PtyBridge
+    Bridge <|.. MirrorBridge
+    Bridge <|.. RemoteWebSocketBridge
+    MultiHostSessionPool "1" o-- "1..*" TmuxProvider
+    PtyBridge --> TmuxProvider : uses (ssh spawn)
+    MirrorBridge --> TmuxProvider : uses (capture-pane)
+    RemoteWebSocketBridge ..> MultiHostSessionPool : indirect (agentUrl)
 ```
 
 ---
