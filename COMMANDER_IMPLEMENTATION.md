@@ -11,7 +11,7 @@ flowchart TB
     Browser["Browser (Work OS Dashboard)"]
     Coding["Coding Agent Session<br/>(e.g., claude/codex running)<br/>[Add Commander] button"]
     Commander["Commander Session (指令官 agent)<br/>role: 'commander'<br/>linkedSessionId: 'hvu:claude-session'<br/>UI: tmux window showing agent output"]
-    Poll["auto-accept polling (5-second interval)<br/>monitors target for isWaitingForInput<br/>auto-sends: '1\\n' or 'y\\n'"]
+    Poll["auto-accept polling (5-second interval)<br/>monitors target for isWaitingForInput<br/>auto-sends: '1\<br/>' or 'y\<br/>'"]
     Browser --> Coding
     Browser --> Commander
     Commander --> Poll

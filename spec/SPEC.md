@@ -414,8 +414,8 @@ flowchart TD
     Wait{isWaitingForInput?}
     Check1{"/[Yy]\\/[Nn]/<br/>/\\d+\\.\\s+[A-Za-z]/<br/>/●\\s*\\d+\\./<br/>/\\?$/<br/>shell prompt"}
     SelectKey{"/1\\. allow|1\\. yes|● 1\\./?"}
-    Send1["sendKey: '1\\n'"]
-    SendY["sendKey: 'y\\n'"]
+    Send1["sendKey: '1\<br/>'"]
+    SendY["sendKey: 'y\<br/>'"]
     Skip["skip"]
 
     Start --> Timer --> Poll --> Wait
