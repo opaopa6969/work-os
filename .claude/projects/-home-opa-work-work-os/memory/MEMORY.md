@@ -1,0 +1,1 @@
+- [Work-OS status](project_workos_pending.md) — Product pending. Security DGE done (27 gaps, 10 critical)

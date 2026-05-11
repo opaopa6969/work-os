@@ -17,33 +17,22 @@ Work OS は複数ホスト上の tmux セッションを統一したダッシュ
 
 ### システム構成図
 
-```
-┌─────────────────────────────────────────────────────┐
-│  ブラウザ (work.unlaxer.org)                       │
-│  セッション一覧、ターミナル操作                      │
-└─────────────────┬─────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────┐
-│  Work OS (Docker コンテナ - HVU Local)             │
-│  ┌──────────────────────────────────────────────┐  │
-│  │ MultiHostSessionPool                         │  │
-│  │  ├─ LocalTmuxProvider                        │  │
-│  │  │  └─ /tmp/tmux-1000/default (bind-mount)  │  │
-│  │  └─ SshTmuxProvider (設定時)                 │  │
-│  │     └─ ssh opa@<WSL-IP>                     │  │
-│  └──────────────────────────────────────────────┘  │
-│  REST API (/api/sessions/*)                        │
-│  WebSocket (Socket.IO - Terminal)                  │
-└────┬──────────────────────┬─────────────────────────┘
-     │                      │
-     ▼                      ▼
-┌─────────────────────┐ ┌──────────────────────────┐
-│ ホスト tmux         │ │ WSL tmux (設定時)       │
-│ (next-3.7)          │ │ ssh でアクセス           │
-│ /tmp/tmux-1000/     │ │ /tmp/tmux-1000/default   │
-│   default           │ │                          │
-└─────────────────────┘ └──────────────────────────┘
+```mermaid
+flowchart TB
+    Browser["ブラウザ (work.unlaxer.org)<br/>セッション一覧、ターミナル操作"]
+    subgraph WorkOS["Work OS (Docker コンテナ - HVU Local)"]
+        Pool[MultiHostSessionPool]
+        LocalP["LocalTmuxProvider<br/>/tmp/tmux-1000/default (bind-mount)"]
+        SshP["SshTmuxProvider (設定時)<br/>ssh opa@&lt;WSL-IP&gt;"]
+        API["REST API (/api/sessions/*)<br/>WebSocket (Socket.IO - Terminal)"]
+        Pool --> LocalP
+        Pool --> SshP
+    end
+    HostTmux["ホスト tmux (next-3.7)<br/>/tmp/tmux-1000/default"]
+    WslTmux["WSL tmux (設定時)<br/>ssh でアクセス<br/>/tmp/tmux-1000/default"]
+    Browser --> WorkOS
+    LocalP --> HostTmux
+    SshP --> WslTmux
 ```
 
 ### Provider インターフェース

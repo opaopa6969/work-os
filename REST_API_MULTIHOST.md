@@ -6,48 +6,27 @@ This implementation enables HVU (work-os server on port 3000) to manage TMux ses
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Browser                                                     │
-│ (WebSocket on :3000)                                        │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-                 ▼
-┌─────────────────────────────────────────────────────────────┐
-│ HVU (work-os on :3000)                                      │
-│                                                             │
-│ • HTTP API routes                                           │
-│ • Socket.IO server                                          │
-│ • MultiHostSessionPool                                      │
-│   - LocalTmuxProvider (local tmux)                          │
-│   - SshTmuxProvider (local → remote SSH)                    │
-│   - HttpRemoteProvider (HTTP → agent API)                   │
-│                                                             │
-│ • WebSocket Proxy Bridge (for HTTP providers)               │
-└────────┬────────────────────────────────────────────────────┘
-         │
-         │ (1) HTTP GET  /api/sessions
-         │ (2) HTTP POST /api/sessions/:id/send-key
-         │ (3) WebSocket connect (proxy)
-         ▼
-┌─────────────────────────────────────────────────────────────┐
-│ WSL Agent (on :3001)                                        │
-│                                                             │
-│ • HTTP API endpoints                                        │
-│   - GET  /api/sessions                                      │
-│   - GET  /api/sessions/:id                                  │
-│   - GET  /api/sessions/:id/capture                          │
-│   - POST /api/sessions/:id/send-key                         │
-│   - POST /api/sessions/:id/send-literal                     │
-│                                                             │
-│ • Socket.IO server (/terminal/:sessionId)                   │
-│   - PTY attachment                                          │
-│   - Real-time terminal I/O                                  │
-│                                                             │
-│ • Local tmux execution                                      │
-│   - Executes tmux commands directly on WSL                  │
-│   - Spawns PTY for session attachment                       │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    Browser["Browser<br/>(WebSocket on :3000)"]
+    subgraph HVU["HVU (work-os on :3000)"]
+        API["HTTP API routes<br/>Socket.IO server"]
+        Pool[MultiHostSessionPool]
+        LocalP["LocalTmuxProvider (local tmux)"]
+        SshP["SshTmuxProvider (local → remote SSH)"]
+        HttpP["HttpRemoteProvider (HTTP → agent API)"]
+        Proxy["WebSocket Proxy Bridge<br/>(for HTTP providers)"]
+        Pool --> LocalP
+        Pool --> SshP
+        Pool --> HttpP
+    end
+    subgraph WSL["WSL Agent (on :3001)"]
+        WslAPI["HTTP API endpoints<br/>GET /api/sessions<br/>GET /api/sessions/:id<br/>GET /api/sessions/:id/capture<br/>POST /api/sessions/:id/send-key<br/>POST /api/sessions/:id/send-literal"]
+        WslIO["Socket.IO server (/terminal/:sessionId)<br/>PTY attachment<br/>Real-time terminal I/O"]
+        WslTmux["Local tmux execution<br/>Executes tmux commands directly on WSL<br/>Spawns PTY for session attachment"]
+    end
+    Browser --> HVU
+    HVU -- "(1) HTTP GET /api/sessions<br/>(2) HTTP POST /api/sessions/:id/send-key<br/>(3) WebSocket connect (proxy)" --> WSL
 ```
 
 ## Implementation Details

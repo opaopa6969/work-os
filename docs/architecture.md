@@ -8,30 +8,27 @@ work-os is a **hybrid control plane**: the web UI runs in Docker, the agents run
 
 ## Overview
 
-```
-Browser
-  │  HTTP (Next.js pages + API routes)
-  │  WebSocket (Socket.IO — terminal stream)
-  ▼
-┌──────────────────────────────────────────┐
-│  work-os process (Docker or local)       │
-│                                          │
-│  Next.js 16 (App Router)                 │
-│    └─ src/app/api/**   REST endpoints    │
-│                                          │
-│  Express 5  (src/server.ts)              │
-│    └─ Socket.IO 4      WS server         │
-│    └─ /healthz         health check      │
-│                                          │
-│  MultiHostSessionPool                    │
-│    ├─ LocalTmuxProvider   (socket)       │
-│    ├─ SshTmuxProvider     (ssh)          │
-│    └─ HttpRemoteProvider  (http)         │
-└──────────┬──────────────────────────┬───┘
-           │ socket bind-mount / SSH   │ HTTP REST
-           ▼                          ▼
-     host tmux                   remote agent
-     /tmp/tmux-1000/default      :3001/api/sessions
+```mermaid
+flowchart TB
+    Browser[Browser]
+    subgraph WorkOS["work-os process (Docker or local)"]
+        Next["Next.js 16 (App Router)<br/>src/app/api/** REST endpoints"]
+        Express["Express 5 (src/server.ts)<br/>Socket.IO 4 — WS server<br/>/healthz — health check"]
+        Pool["MultiHostSessionPool"]
+        LocalP["LocalTmuxProvider (socket)"]
+        SshP["SshTmuxProvider (ssh)"]
+        HttpP["HttpRemoteProvider (http)"]
+        Pool --> LocalP
+        Pool --> SshP
+        Pool --> HttpP
+    end
+    HostTmux["host tmux<br/>/tmp/tmux-1000/default"]
+    Remote["remote agent<br/>:3001/api/sessions"]
+    Browser -- "HTTP (Next.js pages + API routes)" --> Next
+    Browser -- "WebSocket (Socket.IO — terminal stream)" --> Express
+    LocalP -- "socket bind-mount" --> HostTmux
+    SshP -- "SSH" --> HostTmux
+    HttpP -- "HTTP REST" --> Remote
 ```
 
 ---
