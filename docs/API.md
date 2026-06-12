@@ -197,20 +197,44 @@ GET /api/sessions/{sessionId}/clients
 }
 ```
 
-### Kill Client
+### Detach / Kill Client
 
 ```http
-POST /api/sessions/{sessionId}/clients/{tty}
+POST /api/sessions/{sessionId}/clients
+Content-Type: application/json
+
+{
+  "action": "detach",
+  "tty": "/dev/pts/5"
+}
 ```
 
 **Parameters:**
 - `sessionId`: Composite session ID
-- `tty`: Client TTY path
+- `action` (required): one of `detach`, `detach-all`, `kill`
+- `tty` (required for `detach`): client TTY path to detach
+- `pid` (required for `kill`): client PID to send `SIGTERM`
 
-**Response:**
+`detach` detaches a single client by TTY, `detach-all` detaches every client of the
+session, and `kill` terminates a client process by PID.
+
+**Response (`detach`):**
 ```json
 {
-  "message": "Client killed"
+  "ok": true,
+  "action": "detach",
+  "tty": "/dev/pts/5",
+  "sessionId": "local:claude"
+}
+```
+
+**Response (`detach-all`):**
+```json
+{
+  "ok": true,
+  "action": "detach-all",
+  "sessionId": "local:claude",
+  "detached": ["/dev/pts/5", "/dev/pts/6"]
 }
 ```
 
