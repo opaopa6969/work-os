@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+node_modules/
+target/
+build/
+out/
+__pycache__/
+dist/
+.gradle/
+.next/
+.nuxt/
+bower_components/
