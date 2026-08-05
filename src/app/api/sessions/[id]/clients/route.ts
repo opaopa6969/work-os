@@ -77,6 +77,20 @@ export async function POST(
       if (!targetPid) {
         return NextResponse.json({ error: 'pid is required' }, { status: 400 });
       }
+      // Validate that targetPid belongs to a tmux client of this session
+      // to prevent killing arbitrary processes (issue #7 finding #2).
+      const clientsOutput = provider.exec([
+        'list-clients', '-t', sessionName, '-F', '#{client_pid}',
+      ]);
+      const allowedPids = clientsOutput
+        ? clientsOutput.split('\n').filter(Boolean).map((p) => Number.parseInt(p, 10) || 0)
+        : [];
+      if (!allowedPids.includes(targetPid)) {
+        return NextResponse.json(
+          { error: 'pid is not a tmux client of this session', pid: targetPid, sessionId: id },
+          { status: 403 }
+        );
+      }
       process.kill(targetPid, 'SIGTERM');
       return NextResponse.json({ ok: true, action, pid: targetPid, sessionId: id });
     }
