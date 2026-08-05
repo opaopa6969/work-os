@@ -10,7 +10,7 @@ const AGENT_SRC = join(__dirname, 'index.ts')
 const TSCONFIG = join(__dirname, '..', 'tsconfig.agent.json')
 
 function spawnAgent(port: number, tmuxSocket: string): ChildProcess {
-  const env: Record<string, string> = {
+  const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH || '',
     HOME: process.env.HOME || '',
     AGENT_PORT: String(port),
