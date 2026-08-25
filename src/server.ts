@@ -6,6 +6,7 @@ import * as pty from 'node-pty';
 import { spawnSync, spawn } from 'child_process';
 import { io as ioClient } from 'socket.io-client';
 import { buildSessionPool, type TmuxProvider, HttpRemoteProvider } from './lib/tmux-provider';
+import { mountMcp } from './mcp/server';
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
@@ -671,8 +672,11 @@ app
         },
         { pty: 0, mirror: 0, 'remote-websocket': 0 },
       );
-      res.json({ ok: true, sessions: bridges.size, ...counts });
+      res.json({ ok: true, name: 'work-os', version: '0.1.21', sessions: bridges.size, ...counts });
     });
+
+    // MCP Streamable HTTP endpoint (mounted before Next.js catch-all)
+    mountMcp(server);
 
     server.all('*all', (req, res) => handle(req, res));
 
