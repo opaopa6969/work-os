@@ -13,7 +13,7 @@
   min-height: 100vh;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-geist-sans);
+  font-family: var(--workos-sans, "Segoe UI", "Helvetica Neue", system-ui, sans-serif);
   background-color: var(--background);
 }
 
