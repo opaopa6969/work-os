@@ -1,0 +1,25 @@
+{
+  "id": "work-os",
+  "name": "Work OS",
+  "description": "Unified terminal dashboard & AI agent orchestration",
+  "type": "node",
+  "hostname": "work.unlaxer.org",
+  "port": 5043,
+  "host": "192.168.1.50",
+  "runtime": "source",
+  "exec_start": "/usr/bin/npm start",
+  "user": "opa",
+  "auth": "minRole:MEMBER",
+  "health_check": "/healthz",
+  "tags": ["mcp", "development", "dashboard", "ai-agent", "opa"],
+  "repo_url": "https://github.com/opaopa6969/work-os",
+  "mcp": {
+    "enabled": true,
+    "port": 5043,
+    "path": "/mcp",
+    "namespace": "workos",
+    "min_role": "MEMBER",
+    "timeoutMs": 110000,
+    "description": "ブラウザベースの tmux 操作ダッシュボード。セッション一覧・キャプチャ・キー送信・auto-accept 制御を MCP tool として提供。"
+  }
+}
