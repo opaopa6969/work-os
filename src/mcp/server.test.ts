@@ -9,6 +9,24 @@ const TEST_PORT = 9278 + 100; // 9378 — 割当表外のテスト用ポート
 let serverProc: ChildProcess | null = null;
 let client: Client | null = null;
 
+function firstTextBlock(result: unknown, field: 'content' | 'contents' = 'content'): string {
+  if (typeof result !== 'object' || result === null) {
+    throw new Error(`MCP result must be an object with ${field}`);
+  }
+
+  const blocks = (result as Record<string, unknown>)[field];
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    throw new Error(`MCP result must contain at least one ${field} block`);
+  }
+
+  const first = blocks[0] as unknown;
+  if (typeof first !== 'object' || first === null || !('text' in first) || typeof first.text !== 'string') {
+    throw new Error(`The first ${field} block must contain text`);
+  }
+
+  return first.text;
+}
+
 async function waitForHealthz(port: number, timeoutMs = 30000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -49,7 +67,7 @@ describe('MCP server e2e', () => {
     await waitForMcp(TEST_PORT);
 
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${TEST_PORT}/mcp`));
-    client = new Client({ name: 'e2e-test', version: '0.1.0' }, { capabilities: { resources: { list: true, read: true } } });
+    client = new Client({ name: 'e2e-test', version: '0.1.0' }, { capabilities: {} });
     await client.connect(transport);
   }, 60000);
 
@@ -84,9 +102,7 @@ describe('MCP server e2e', () => {
 
   it('list_templates returns templates array', async () => {
     const result = await client!.callTool({ name: 'list_templates', arguments: {} });
-    expect(result.content).toBeDefined();
-    expect(result.content!.length).toBeGreaterThan(0);
-    const text = (result.content![0] as any).text;
+    const text = firstTextBlock(result);
     const parsed = JSON.parse(text);
     expect(parsed).toHaveProperty('templates');
     expect(Array.isArray(parsed.templates)).toBe(true);
@@ -94,7 +110,7 @@ describe('MCP server e2e', () => {
 
   it('list_sessions returns sessions array', async () => {
     const result = await client!.callTool({ name: 'list_sessions', arguments: {} });
-    const text = (result.content![0] as any).text;
+    const text = firstTextBlock(result);
     const parsed = JSON.parse(text);
     expect(parsed).toHaveProperty('sessions');
     expect(Array.isArray(parsed.sessions)).toBe(true);
@@ -102,7 +118,7 @@ describe('MCP server e2e', () => {
 
   it('kill_session dry-run returns dryRun flag without killing', async () => {
     const result = await client!.callTool({ name: 'kill_session', arguments: { id: 'local:nonexistent-test', confirm: false } });
-    const text = (result.content![0] as any).text;
+    const text = firstTextBlock(result);
     const parsed = JSON.parse(text);
     expect(parsed.dryRun).toBe(true);
     expect(parsed.id).toBe('local:nonexistent-test');
@@ -110,7 +126,7 @@ describe('MCP server e2e', () => {
 
   it('send_key dry-run returns preview without sending', async () => {
     const result = await client!.callTool({ name: 'send_key', arguments: { id: 'local:nonexistent-test', key: 'y', confirm: false } });
-    const text = (result.content![0] as any).text;
+    const text = firstTextBlock(result);
     const parsed = JSON.parse(text);
     expect(parsed.dryRun).toBe(true);
     expect(parsed.key).toBe('y');
@@ -118,7 +134,7 @@ describe('MCP server e2e', () => {
 
   it('resources are readable (workos://spec and workos://guide)', async () => {
     const specResult = await client!.readResource({ uri: 'workos://spec' });
-    const specText = specResult.contents[0].text as string;
+    const specText = firstTextBlock(specResult, 'contents');
     const spec = JSON.parse(specText);
     expect(spec.namespace).toBe('workos');
     expect(spec.capabilities).toBeDefined();
@@ -126,7 +142,7 @@ describe('MCP server e2e', () => {
     expect(spec.capabilities!.length).toBe(11);
 
     const guideResult = await client!.readResource({ uri: 'workos://guide' });
-    const guideText = guideResult.contents[0].text as string;
+    const guideText = firstTextBlock(guideResult, 'contents');
     expect(guideText).toContain('# Work OS MCP Guide');
     expect(guideText).toContain('namespace');
   });
