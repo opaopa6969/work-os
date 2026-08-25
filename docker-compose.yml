@@ -3,17 +3,14 @@ services:
     build: .
     container_name: work-os-app
     ports:
-      - "3000:3000"
-    restart: always
+      - "2990:3000"
+    restart: no
     volumes:
-      - /mnt/c/var/work/work-os/src:/app/src
-      - /mnt/c/var/work/work-os/public:/app/public
-      - /mnt/c/var/work/work-os/templates:/app/templates
       - /usr/local/bin/tmux:/usr/local/bin/tmux:ro
       - /tmp/tmux-1000:/tmp/tmux-1000
       - /mnt/c/var:/mnt/c/var
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - TMUX_SOCKET=/tmp/tmux-1000/default
@@ -27,7 +24,8 @@ services:
     user: root
     restart: always
     volumes:
-      - /home/opa/.cloudflared:/etc/cloudflared
+      - /home/opa/.cloudflared/19a30aca-d60d-465a-81f0-85687ecffcfc.json:/etc/cloudflared/19a30aca-d60d-465a-81f0-85687ecffcfc.json:ro
+      - /home/opa/.cloudflared/cert.pem:/etc/cloudflared/cert.pem:ro
     command: tunnel --cred-file /etc/cloudflared/19a30aca-d60d-465a-81f0-85687ecffcfc.json run --url http://app:3000 19a30aca-d60d-465a-81f0-85687ecffcfc
     depends_on:
       - app

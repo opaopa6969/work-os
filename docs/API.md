@@ -106,18 +106,20 @@ GET /api/sessions/{sessionId}
 **Response:**
 ```json
 {
+  "id": "local:claude-session",
   "content": "Terminal output content...",
   "isWaitingForInput": true,
-  "sessionId": "local:claude-session",
-  "mode": "mirror"
+  "lastLine": "Continue? (y/n)",
+  "updatedAt": 1710000000000
 }
 ```
 
 **Fields:**
 - `content`: Current terminal screen content (ANSI codes included)
 - `isWaitingForInput`: Boolean indicating if session is waiting for user input
-- `sessionId`: The session ID
-- `mode`: Current connection mode (pty/mirror)
+- `id`: The requested composite session ID
+- `lastLine`: The final line of the captured content
+- `updatedAt`: Response generation time in Unix milliseconds
 
 ### Send Key to Session
 
@@ -137,7 +139,7 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "message": "Key sent"
+  "message": "Sent key: y to session: local:claude-session"
 }
 ```
 
@@ -150,7 +152,7 @@ DELETE /api/sessions/{sessionId}
 **Response:**
 ```json
 {
-  "message": "Session terminated"
+  "message": "Session local:claude-session killed"
 }
 ```
 
@@ -166,7 +168,10 @@ POST /api/sessions/{sessionId}/shell
 **Response:**
 ```json
 {
-  "newSession": "local:sh-claude-session-xyz123"
+  "message": "Opened shell in /home/user/project",
+  "newSession": "sh-claude-session-1234",
+  "compositeId": "local:sh-claude-session-1234",
+  "cwd": "/home/user/project"
 }
 ```
 
