@@ -157,4 +157,20 @@ Mirror mode is safer when a session is already attached elsewhere. PTY mode give
 - **`next.config.js` / `next.config.ts` duplicate** — both files exist; `next.config.js` wins. The `.ts` stub should be deleted.
 - **No authentication** — all API endpoints and the Socket.IO connection are unauthenticated. See [docs/security.md](docs/security.md).
 - **Commander Agent whitelist absent** — the agent responds to any matching prompt pattern; no per-session allow-list exists.
+
+---
+
+## MCP
+
+work-os exposes an **MCP (Model Context Protocol)** endpoint at `/mcp` on the same Express server (port 5043). It wraps the existing REST API as MCP tools, allowing AI agents to list, capture, and interact with tmux sessions programmatically.
+
+- **Namespace**: `workos` (via [volta-mcp](https://github.com/opaopa6969/volta-mcp) facade)
+- **Tools**: 11 tools (`list_sessions`, `create_session`, `capture_session`, `send_key`, `kill_session`, `open_shell`, `list_clients`, `control_clients`, `set_auto_accept`, `get_auto_accept`, `list_templates`) — see `workos://spec` resource for the machine-readable spec.
+- **Resources**: `workos://spec` (capabilities JSON), `workos://guide` (usage guide).
+- **Safety**: Destructive tools (`kill_session`, `control_clients` kill action) require `confirm: true`. `send_key` supports `confirm` for dry-run preview.
+- **Volta registration**: `mcp` section in `volta.service.json` — see [docs/mcp/DESIGN.md](docs/mcp/DESIGN.md) for details.
+
+### Starting the MCP server
+
+The MCP endpoint is part of the main server — `npm start` (or `npm run dev`) serves both the dashboard and `/mcp`. No separate process needed.
 - **Mirror mode cursor** — `capture-pane` output does not preserve cursor position; complex TUI cursor rendering may be off.

@@ -1,0 +1,174 @@
+{
+  "repo": "work-os",
+  "surveyed_at": "2026-08-21T22:58:38Z",
+  "kind": "service",
+  "summary": "ブラウザベースの tmux 操作ダッシュボード。Next.js 16 + Express 5 + Socket.IO で、複数ホスト（local / SSH / HTTP agent）の tmux セッションを 1 画面に集約し、ライブストリーミング・コマンド送信・Commander Agent による自動応答を行う。既に volta にホスト済み（https://work.unlaxer.org, healthz あり）。",
+  "decision": "wrap",
+  "decision_reason": "既存の REST API（/api/sessions, /api/sessions/:id, send-key, auto-accept, clients, templates）と healthz が稼働中であり、MCP 化はこれらの薄いラッパーで足りる。エージェントから「tmux セッション一覧取得→キャプチャ→キー送信→auto-accept 制御」を呼べる価値は高く、volta-index の index__agent_*（fork/send/stop）が tmux の外側のエージェント管理を担当するのに対し、work-os は tmux セッション内部の観察・操作に特化するため重複しない。Commander auto-accept は長時間ポーリングだが既存 API が同期的に開始/停止するため job 型は不要。",
+  "existing": {
+    "http_api": true,
+    "cli": false,
+    "mcp": false,
+    "healthz": true,
+    "volta_manifest": false,
+    "hosted_url": "https://work.unlaxer.org"
+  },
+  "proposed_namespace": "workos",
+  "capabilities": [
+    {
+      "verb": "全ホストの tmux セッション一覧を取得する",
+      "kind": "tool",
+      "name": "list_sessions",
+      "io": "{} → { sessions: [{ id, name, hostId, command, directory, isAttached, currentCommand, suggestedMode, sessionRole, linkedSessionId }] }",
+      "side_effect": "read",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/route.ts:GET"
+    },
+    {
+      "verb": "新規 tmux セッションを起動する",
+      "kind": "tool",
+      "name": "create_session",
+      "io": "{ name, command, cwd, templateName?, hostId?, sessionRole?, linkedSessionId? } → { compositeId, sessionName, instructionPath }",
+      "side_effect": "write",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/route.ts:POST"
+    },
+    {
+      "verb": "セッションの画面キャプチャと入力待ち判定を取得する",
+      "kind": "tool",
+      "name": "capture_session",
+      "io": "{ id } → { content, isWaitingForInput, lastLine, updatedAt }",
+      "side_effect": "read",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/route.ts:GET"
+    },
+    {
+      "verb": "tmux セッションにキーを送信する",
+      "kind": "tool",
+      "name": "send_key",
+      "io": "{ id, key } → { message }",
+      "side_effect": "write",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/send-key/route.ts:POST"
+    },
+    {
+      "verb": "tmux セッションを終了する",
+      "kind": "tool",
+      "name": "kill_session",
+      "io": "{ id } → { message }",
+      "side_effect": "destructive",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/route.ts:DELETE"
+    },
+    {
+      "verb": "同じ CWD で子 bash セッションを派生起動する",
+      "kind": "tool",
+      "name": "open_shell",
+      "io": "{ id } → { newSession, compositeId, cwd }",
+      "side_effect": "write",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/shell/route.ts:POST"
+    },
+    {
+      "verb": "セッションの tmux クライアント一覧を取得する",
+      "kind": "tool",
+      "name": "list_clients",
+      "io": "{ id } → { clients: [{ name, pid, tty, size, created, activity }] }",
+      "side_effect": "read",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/clients/route.ts:GET"
+    },
+    {
+      "verb": "tmux クライアントを detach / kill する",
+      "kind": "tool",
+      "name": "control_clients",
+      "io": "{ id, action: detach|detach-all|kill, tty?, pid? } → { ok }",
+      "side_effect": "destructive",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/clients/route.ts:POST"
+    },
+    {
+      "verb": "Commander Agent の auto-accept を有効化/無効化する",
+      "kind": "tool",
+      "name": "set_auto_accept",
+      "io": "{ commanderSessionId, enabled, targetSessionId? } → { message, commanderSessionId, targetSessionId? }",
+      "side_effect": "write",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/auto-accept/route.ts:POST"
+    },
+    {
+      "verb": "Commander Agent の auto-accept 状態を取得する",
+      "kind": "tool",
+      "name": "get_auto_accept",
+      "io": "{ commanderSessionId } → { enabled, targetSessionId, role }",
+      "side_effect": "read",
+      "long_running": false,
+      "maps_to": "src/app/api/sessions/[id]/auto-accept/route.ts:GET"
+    },
+    {
+      "verb": "エージェントテンプレート一覧を取得する",
+      "kind": "tool",
+      "name": "list_templates",
+      "io": "{} → { templates: [{ name, description }] }",
+      "side_effect": "read",
+      "long_running": false,
+      "maps_to": "src/app/api/templates/route.ts:GET"
+    },
+    {
+      "verb": "能力の仕様",
+      "kind": "resource",
+      "name": "spec",
+      "uri": "workos://spec"
+    },
+    {
+      "verb": "使い方",
+      "kind": "resource",
+      "name": "guide",
+      "uri": "workos://guide"
+    },
+    {
+      "verb": "Commander Agent 運用手順（auto-accept の使い方・プロンプト検出パターン・安全上の注意）",
+      "kind": "skill",
+      "name": "commander-agent-ops",
+      "locality": "service"
+    }
+  ],
+  "composition_examples": [
+    "workos__capture_session(id) → isWaitingForInput=true を検知 → workos__send_key(id, 'y') で自動応答 → index__agent_send で別エージェントに結果を中継",
+    "workos__list_sessions → workos__create_session(command='claude', templateName='commander') → workos__set_auto_accept(commanderId, targetId) で無人運用 → volta__svc_health で全体健全性確認",
+    "workos__capture_session → 内容解析 → index__agent_fork で作業エージェント起動 → workos__send_key で結果を投入"
+  ],
+  "dependencies": [
+    {
+      "repo": "volta-index",
+      "direction": "provides_to",
+      "capability": "work-os のセッション操作を他サービスのエージェントが利用可能になる（index__agent_* が tmux 外のエージェント管理、workos__* が tmux 内の操作）",
+      "exists_now": true,
+      "note": "index の MCP namespace='index' はエージェント fork/send/fanout を提供。work-os MCP は tmux セッション内部の観察・操作に特化し、補完関係にある。"
+    },
+    {
+      "repo": "volta-platform",
+      "direction": "depends_on",
+      "capability": "volta__svc_deploy / volta__svc_health / volta__svc_status で work-os サービス自身の管理",
+      "exists_now": true,
+      "note": "work-os は既に volta にホスト済み。MCP 追加時は volta-platform の services.json 編集（volta__svc_add）が必要だが Phase 1 では実施しない。"
+    }
+  ],
+  "library_serve": {
+    "needed": false,
+    "new_work": [],
+    "runtime": "node",
+    "estimated_effort": "S"
+  },
+  "risks": [
+    "認証なし: REST API・Socket.IO ともに認証がなく、MCP 経由でキー送信・セッション kill・クライアント kill が可能。MCP tool に confirm/dry-run を必須とし、破壊系（kill_session, control_clients action=kill, send_key）は confirm: bool=false をデフォルトとする。",
+    "Commander auto-accept にホワイトリストがなく、任意のプロンプトパターンに自動応答する。プロンプト検出の正規表現が緩いため、意図しない操作を引き起こす可能性がある。",
+    "Socket.IO は stateful な接続（WebSocket）であり、MCP tool からの同期的な画面ストリーミングには適さない。capture_session（polling）と send_key の組み合わせで代替する。",
+    "マルチホスト構成では SSH 認証情報（sshTarget）が環境変数に含まれる。MCP 経由でこれらを露出させない。"
+  ],
+  "open_questions": [
+    "Socket.IO ベースのライブストリーミングを MCP でどう扱うか（polling で十分か、あるいは MCP resource の subscription で対応するか）",
+    "namespace 'workos' が予約語（catalog/probe/skill）と衝突しないか確認が必要",
+    "confirm/dry-run の粒度: kill_session と control_clients(action=kill) は confirm 必須とするが、send_key はどうするか（破壊的だが頻度が高い）"
+  ]
+}
