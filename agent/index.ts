@@ -17,8 +17,19 @@ const io = new Server(httpServer, {
 const AGENT_PORT = Number(process.env.AGENT_PORT) || 3001;
 const TMUX_SOCKET = process.env.TMUX_SOCKET || '/tmp/tmux-1000/default';
 
-// Store active PTY sessions
-const ptyBridges = new Map<string, pty.IPty>();
+// Store active PTY sessions.
+// A bridge holds a single PTY process shared by every socket attached to the
+// same session, so multiple browsers connecting to the same session reuse the
+// existing PTY instead of overwriting it (mirrors src/server.ts PtyBridge).
+type PtyBridge = {
+  sessionName: string;
+  ptyProcess: pty.IPty;
+  sockets: Set<string>;
+  createdAt: number;
+  lastActiveAt: number;
+};
+
+const ptyBridges = new Map<string, PtyBridge>();
 const socketToSession = new Map<string, string>();
 
 /**
@@ -202,6 +213,34 @@ app.post('/api/sessions/:id/send-literal', (req, res) => {
 // WebSocket Routes (via Socket.IO)
 // ============================================================================
 
+/**
+ * Detach a single socket from its bridge. When the bridge has no remaining
+ * sockets the underlying PTY is killed and the bridge is removed, mirroring
+ * src/server.ts detachSocket().
+ */
+function detachSocket(socketId: string) {
+  const sessionName = socketToSession.get(socketId);
+  if (!sessionName) {
+    return;
+  }
+
+  const bridge = ptyBridges.get(sessionName);
+  if (bridge) {
+    bridge.sockets.delete(socketId);
+    bridge.lastActiveAt = Date.now();
+    if (bridge.sockets.size === 0) {
+      try {
+        bridge.ptyProcess.kill();
+      } catch {
+        // PTY may already be dead
+      }
+      ptyBridges.delete(sessionName);
+    }
+  }
+
+  socketToSession.delete(socketId);
+}
+
 io.on('connection', (socket) => {
   socket.emit('terminal:status', {
     state: 'connected',
@@ -224,14 +263,33 @@ io.on('connection', (socket) => {
     // Detach from previous session if any
     const prevSessionId = socketToSession.get(socket.id);
     if (prevSessionId) {
-      const bridge = ptyBridges.get(prevSessionId);
-      if (bridge) {
-        bridge.kill();
-      }
-      ptyBridges.delete(prevSessionId);
+      detachSocket(socket.id);
     }
 
     try {
+      const existing = ptyBridges.get(sessionName);
+      if (existing) {
+        // Reuse the PTY already spawned for this session (multi-attach path).
+        existing.sockets.add(socket.id);
+        existing.lastActiveAt = Date.now();
+        socketToSession.set(socket.id, sessionName);
+
+        if (cols > 0 && rows > 0) {
+          try {
+            existing.ptyProcess.resize(cols, rows);
+          } catch {
+            // ignore resize errors
+          }
+        }
+
+        socket.emit('terminal:status', {
+          state: 'ready',
+          sessionId: sessionName,
+          message: 'PTY attached (shared)',
+        });
+        return;
+      }
+
       // Spawn PTY for tmux attach-session
       const ptyProcess = pty.spawn('tmux', ['-S', TMUX_SOCKET, 'attach-session', '-t', sessionName], {
         name: process.env.TERM || 'xterm-256color',
@@ -245,19 +303,32 @@ io.on('connection', (socket) => {
         } as Record<string, string>,
       });
 
-      ptyBridges.set(sessionName, ptyProcess);
+      const bridge: PtyBridge = {
+        sessionName,
+        ptyProcess,
+        sockets: new Set<string>([socket.id]),
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+      };
+      ptyBridges.set(sessionName, bridge);
       socketToSession.set(socket.id, sessionName);
 
-      // Send initial data
+      // Broadcast PTY output to every attached socket
       ptyProcess.onData((data) => {
-        socket.emit('output', data);
+        bridge.lastActiveAt = Date.now();
+        for (const socketId of bridge.sockets) {
+          io.to(socketId).emit('output', data);
+        }
       });
 
       // Handle exit
       ptyProcess.onExit(({ exitCode, signal }) => {
-        socket.emit('session-exit', { sessionId: sessionName, exitCode, signal });
+        for (const socketId of bridge.sockets) {
+          io.to(socketId).emit('session-exit', { sessionId: sessionName, exitCode, signal });
+          socketToSession.delete(socketId);
+        }
+        bridge.sockets.clear();
         ptyBridges.delete(sessionName);
-        socketToSession.delete(socket.id);
       });
 
       socket.emit('terminal:status', {
@@ -282,13 +353,14 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const ptyProcess = ptyBridges.get(sessionName);
-    if (!ptyProcess) {
+    const bridge = ptyBridges.get(sessionName);
+    if (!bridge) {
       return;
     }
 
+    bridge.lastActiveAt = Date.now();
     const data = String(payload?.data || '');
-    ptyProcess.write(data);
+    bridge.ptyProcess.write(data);
   });
 
   /**
@@ -300,8 +372,8 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const ptyProcess = ptyBridges.get(sessionName);
-    if (!ptyProcess) {
+    const bridge = ptyBridges.get(sessionName);
+    if (!bridge) {
       return;
     }
 
@@ -309,8 +381,9 @@ io.on('connection', (socket) => {
     const rows = Number(payload?.rows || 0);
 
     if (cols > 0 && rows > 0) {
+      bridge.lastActiveAt = Date.now();
       try {
-        ptyProcess.resize(cols, rows);
+        bridge.ptyProcess.resize(cols, rows);
         // Also resize tmux window
         execTmux(['resize-window', '-t', sessionName, '-x', String(cols), '-y', String(rows)]);
       } catch {
@@ -323,15 +396,7 @@ io.on('connection', (socket) => {
    * disconnect: Clean up
    */
   socket.on('disconnect', () => {
-    const sessionName = socketToSession.get(socket.id);
-    if (sessionName) {
-      const ptyProcess = ptyBridges.get(sessionName);
-      if (ptyProcess) {
-        ptyProcess.kill();
-      }
-      ptyBridges.delete(sessionName);
-    }
-    socketToSession.delete(socket.id);
+    detachSocket(socket.id);
   });
 });
 
